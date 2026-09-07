@@ -497,6 +497,8 @@ function renderDelta(elementId, changeValue, percentageValue) {
 }
 
 
+
+
 /*
 ====================================================
 INTELLIGENCE FINDINGS
@@ -505,104 +507,775 @@ INTELLIGENCE FINDINGS
 
 function priorityRank(priority) {
 
-    const p = String(priority || "low").toLowerCase();
+    const p =
+        String(priority || "low").toLowerCase();
 
     if (p === "critical") return 0;
     if (p === "high") return 1;
     if (p === "medium") return 2;
 
     return 3;
-
 }
 
+
+/*
+====================================================
+RENDER FINDINGS
+====================================================
+*/
 
 function renderFindings(data) {
 
-    const container = getElement("insights-container");
-    const meta = getElement("findings-meta");
+    const container =
+        getElement("insights-container");
 
-    const insights = Array.isArray(data?.insights) ? [...data.insights] : [];
+    const meta =
+        getElement("findings-meta");
+
+
+    const insights =
+        Array.isArray(data?.insights)
+            ? [...data.insights]
+            : [];
+
+
+    /*
+    ================================================
+    NO FINDINGS
+    ================================================
+    */
 
     if (meta) {
-        meta.textContent = insights.length ? `${insights.length} observations` : "";
+
+        meta.textContent =
+            insights.length
+                ? `${insights.length} observations`
+                : "";
+
     }
 
+
     if (!insights.length) {
-        container.innerHTML = emptyState("No intelligence findings were generated for this report.", { icon: "\u2713" });
-        const toggle = getElement("findings-toggle");
-        if (toggle) toggle.style.display = "none";
+
+        if (container) {
+
+            container.innerHTML =
+                emptyState(
+                    "No intelligence findings were generated for this report.",
+                    {
+                        icon: "\u2713"
+                    }
+                );
+
+        }
+
+
+        const toggle =
+            getElement("findings-toggle");
+
+        if (toggle) {
+
+            toggle.style.display =
+                "none";
+
+        }
+
         return;
     }
 
-    insights.sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
 
-    container.innerHTML = insights
-        .map((insight, index) => {
+    /*
+    ================================================
+    SORT BY PRIORITY
+    ================================================
+    */
 
-            const priority = String(insight.priority || "low").toLowerCase();
-            const pClass = priorityClass(priority);
+    insights.sort(
+        (a, b) =>
+            priorityRank(a.priority) -
+            priorityRank(b.priority)
+    );
 
-            return `
-                <div class="finding-row row-anim" style="${rowDelay(index)}">
 
-                    <div class="finding-bar ${pClass}"></div>
+    /*
+    ================================================
+    RENDER FINDINGS
+    ================================================
+    */
 
-                    <div>
+    container.innerHTML =
+        insights
+            .map(
+                (insight, index) => {
 
-                        <div class="finding-top">
-                            <span class="finding-type">
-                                ${escapeHTML(formatInsightType(insight.type))}
-                            </span>
+                    const priority =
+                        String(
+                            insight.priority || "low"
+                        ).toLowerCase();
 
-                            <span class="badge ${pClass}">
-                                ${escapeHTML(priority)}
-                            </span>
+
+                    const pClass =
+                        priorityClass(priority);
+
+
+                    const hasRecommendation =
+                        Boolean(
+                            insight.recommendedAction
+                        );
+
+
+                    return `
+
+                        <div
+                            class="finding-row row-anim finding-clickable"
+                            style="${rowDelay(index)}"
+                            data-finding-index="${index}"
+                            role="button"
+                            tabindex="0"
+                            aria-label="View finding details">
+
+                            <div
+                                class="finding-bar ${pClass}">
+                            </div>
+
+
+                            <div class="finding-content">
+
+                                <div class="finding-top">
+
+                                    <span class="finding-type">
+
+                                        ${escapeHTML(
+                                            formatInsightType(
+                                                insight.type
+                                            )
+                                        )}
+
+                                    </span>
+
+
+                                    <span
+                                        class="badge ${pClass}">
+
+                                        ${escapeHTML(
+                                            priority
+                                        )}
+
+                                    </span>
+
+                                </div>
+
+
+                                <div class="finding-message">
+
+                                    ${escapeHTML(
+                                        insight.message ||
+                                        "No description available."
+                                    )}
+
+                                </div>
+
+
+                                ${
+                                    hasRecommendation
+                                        ? `
+
+                                            <div
+                                                class="finding-action-hint">
+
+                                                <span>
+                                                    Recommended action
+                                                </span>
+
+                                                <span
+                                                    class="finding-action-arrow">
+
+                                                    →
+
+                                                </span>
+
+                                            </div>
+
+                                          `
+                                        : ""
+                                }
+
+                            </div>
+
                         </div>
 
-                        <div class="finding-message">
-                            ${escapeHTML(insight.message || "No description available.")}
-                        </div>
+                    `;
 
-                    </div>
+                }
+            )
+            .join("");
 
-                </div>
-            `;
 
-        })
-        .join("");
+    /*
+    ================================================
+    CLICK / KEYBOARD HANDLERS
+    ================================================
+    */
 
-    // Progressive disclosure: only reveal the "show all" affordance when
-    // the findings list is actually tall enough to be clipped. Same data,
-    // just not all dumped on screen by default.
-    requestAnimationFrame(() => {
+    container
+        .querySelectorAll(
+            ".finding-clickable"
+        )
+        .forEach(
+            row => {
 
-        const wrap = getElement("findings-wrap");
-        const toggle = getElement("findings-toggle");
+                const index =
+                    Number(
+                        row.dataset.findingIndex
+                    );
 
-        if (!wrap || !toggle) {
-            return;
+
+                const insight =
+                    insights[index];
+
+
+                const openDetails =
+                    () => {
+
+                        openFindingDetails(
+                            insight
+                        );
+
+                    };
+
+
+                /*
+                ------------------------------------
+                MOUSE
+                ------------------------------------
+                */
+
+                row.addEventListener(
+                    "click",
+                    openDetails
+                );
+
+
+                /*
+                ------------------------------------
+                KEYBOARD
+                ------------------------------------
+                */
+
+                row.addEventListener(
+                    "keydown",
+                    event => {
+
+                        if (
+                            event.key === "Enter" ||
+                            event.key === " "
+                        ) {
+
+                            event.preventDefault();
+
+                            openDetails();
+
+                        }
+
+                    }
+                );
+
+            }
+        );
+
+
+    /*
+    ================================================
+    PROGRESSIVE DISCLOSURE
+    ================================================
+    */
+
+    requestAnimationFrame(
+        () => {
+
+            const wrap =
+                getElement(
+                    "findings-wrap"
+                );
+
+            const toggle =
+                getElement(
+                    "findings-toggle"
+                );
+
+
+            if (
+                !wrap ||
+                !toggle
+            ) {
+
+                return;
+
+            }
+
+
+            wrap.classList.remove(
+                "expanded"
+            );
+
+
+            toggle.textContent =
+                "Show all findings";
+
+
+            const overflowing =
+                container.scrollHeight >
+                280;
+
+
+            toggle.style.display =
+                overflowing
+                    ? "block"
+                    : "none";
+
         }
-
-        wrap.classList.remove("expanded");
-        toggle.textContent = "Show all findings";
-
-        const overflowing = container.scrollHeight > 280;
-        toggle.style.display = overflowing ? "block" : "none";
-
-    });
+    );
 
 }
 
 
-function formatInsightType(type) {
+/*
+====================================================
+FINDING DETAILS MODAL
+====================================================
+*/
+
+function openFindingDetails(
+    finding
+) {
+
+    if (!finding) {
+        return;
+    }
+
+
+    /*
+    ================================================
+    FIND OR CREATE MODAL
+    ================================================
+    */
+
+    let modal =
+        document.getElementById(
+            "finding-detail-modal"
+        );
+
+
+    if (!modal) {
+
+        modal =
+            document.createElement(
+                "div"
+            );
+
+
+        modal.id =
+            "finding-detail-modal";
+
+
+        modal.className =
+            "finding-detail-modal";
+
+
+        modal.innerHTML = `
+
+            <div
+                class="finding-detail-backdrop"
+                data-finding-close>
+            </div>
+
+
+            <div
+                class="finding-detail-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="finding-detail-title">
+
+
+                <button
+                    type="button"
+                    class="finding-detail-close"
+                    data-finding-close
+                    aria-label="Close finding details">
+
+                    ×
+
+                </button>
+
+
+                <div
+                    class="finding-detail-header">
+
+                    <div>
+
+                        <span
+                            class="finding-detail-kicker"
+                            id="finding-detail-type">
+                        </span>
+
+
+                        <h3
+                            id="finding-detail-title">
+                        </h3>
+
+                    </div>
+
+
+                    <span
+                        id="finding-detail-priority"
+                        class="badge">
+                    </span>
+
+                </div>
+
+
+                <div
+                    class="finding-detail-body">
+
+
+                    <!--
+                    =================================
+                    OBSERVATION
+                    =================================
+                    -->
+
+                    <section
+                        class="finding-detail-section">
+
+                        <span
+                            class="finding-detail-label">
+
+                            Observation
+
+                        </span>
+
+
+                        <p
+                            id="finding-detail-description">
+                        </p>
+
+                    </section>
+
+
+                    <!--
+                    =================================
+                    RECOMMENDED ACTION
+                    =================================
+                    -->
+
+                    <section
+                        class="finding-detail-section finding-recommended-section">
+
+                        <span
+                            class="finding-detail-label">
+
+                            Recommended action
+
+                        </span>
+
+
+                        <p
+                            id="finding-detail-action">
+                        </p>
+
+                    </section>
+
+                </div>
+
+            </div>
+
+        `;
+
+
+        document.body.appendChild(
+            modal
+        );
+
+
+        /*
+        ================================================
+        CLOSE BUTTON + BACKDROP
+        ================================================
+        */
+
+        modal
+            .querySelectorAll(
+                "[data-finding-close]"
+            )
+            .forEach(
+                element => {
+
+                    element.addEventListener(
+                        "click",
+                        closeFindingDetails
+                    );
+
+                }
+            );
+
+    }
+
+
+    /*
+    ================================================
+    FINDING VALUES
+    ================================================
+    */
+
+    const priority =
+        String(
+            finding.priority || "low"
+        ).toLowerCase();
+
+
+    const pClass =
+        priorityClass(
+            priority
+        );
+
+
+    /*
+    ================================================
+    TYPE
+    ================================================
+    */
+
+    const typeElement =
+        document.getElementById(
+            "finding-detail-type"
+        );
+
+
+    if (typeElement) {
+
+        typeElement.textContent =
+            formatInsightType(
+                finding.type
+            );
+
+    }
+
+
+    /*
+    ================================================
+    TITLE
+    ================================================
+    */
+
+    const titleElement =
+        document.getElementById(
+            "finding-detail-title"
+        );
+
+
+    if (titleElement) {
+
+        titleElement.textContent =
+            finding.title ||
+            formatInsightType(
+                finding.type
+            );
+
+    }
+
+
+    /*
+    ================================================
+    PRIORITY
+    ================================================
+    */
+
+    const priorityElement =
+        document.getElementById(
+            "finding-detail-priority"
+        );
+
+
+    if (priorityElement) {
+
+        priorityElement.textContent =
+            priority;
+
+
+        priorityElement.className =
+            `badge ${pClass}`;
+
+    }
+
+
+    /*
+    ================================================
+    DESCRIPTION
+    ================================================
+    */
+
+    const descriptionElement =
+        document.getElementById(
+            "finding-detail-description"
+        );
+
+
+    if (descriptionElement) {
+
+        descriptionElement.textContent =
+            finding.message ||
+            "No description available.";
+
+    }
+
+
+    /*
+    ================================================
+    RECOMMENDED ACTION
+    ================================================
+    */
+
+    const actionElement =
+        document.getElementById(
+            "finding-detail-action"
+        );
+
+
+    if (actionElement) {
+
+        actionElement.textContent =
+            finding.recommendedAction ||
+            "No recommended action was provided for this finding.";
+
+    }
+
+
+    /*
+    ================================================
+    SHOW MODAL
+    ================================================
+    */
+
+    modal.classList.add(
+        "visible"
+    );
+
+
+    document.body.classList.add(
+        "modal-open"
+    );
+
+
+    /*
+    ================================================
+    ESCAPE KEY
+    ================================================
+    */
+
+    const escapeHandler =
+        event => {
+
+            if (
+                event.key === "Escape"
+            ) {
+
+                closeFindingDetails();
+
+            }
+
+        };
+
+
+    modal._escapeHandler =
+        escapeHandler;
+
+
+    document.addEventListener(
+        "keydown",
+        escapeHandler
+    );
+
+}
+
+
+/*
+====================================================
+CLOSE FINDING DETAILS
+====================================================
+*/
+
+function closeFindingDetails() {
+
+    const modal =
+        document.getElementById(
+            "finding-detail-modal"
+        );
+
+
+    if (!modal) {
+        return;
+    }
+
+
+    modal.classList.remove(
+        "visible"
+    );
+
+
+    document.body.classList.remove(
+        "modal-open"
+    );
+
+
+    /*
+    ================================================
+    REMOVE ESCAPE LISTENER
+    ================================================
+    */
+
+    if (
+        modal._escapeHandler
+    ) {
+
+        document.removeEventListener(
+            "keydown",
+            modal._escapeHandler
+        );
+
+
+        modal._escapeHandler =
+            null;
+
+    }
+
+}
+
+
+/*
+====================================================
+FORMAT FINDING TYPE
+====================================================
+*/
+
+function formatInsightType(
+    type
+) {
 
     if (!type) {
         return "Observation";
     }
 
+
     return String(type)
-        .replace(/_/g, " ")
-        .replace(/\b\w/g, char => char.toUpperCase());
+        .replace(
+            /_/g,
+            " "
+        )
+        .replace(
+            /\b\w/g,
+            char =>
+                char.toUpperCase()
+        );
 
 }
 

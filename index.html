@@ -1775,6 +1775,253 @@
         .back-button:hover svg {
             transform: translateX(-1px);
         }
+/* =========================================================
+   INTELLIGENCE FINDING INTERACTION
+   ========================================================= */
+
+.finding-clickable {
+    cursor: pointer;
+    transition:
+        background 0.15s ease,
+        padding-left 0.15s ease;
+}
+
+.finding-clickable:hover {
+    background: var(--bg-raised);
+    padding-left: 8px;
+}
+
+.finding-clickable:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+.finding-content {
+    min-width: 0;
+}
+
+.finding-action-hint {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 9px;
+
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+
+    color: var(--text-tertiary);
+}
+
+.finding-action-arrow {
+    font-size: 13px;
+    transition: transform 0.15s ease;
+}
+
+.finding-clickable:hover .finding-action-arrow {
+    transform: translateX(3px);
+}
+
+
+/* =========================================================
+   FINDING DETAIL MODAL
+   ========================================================= */
+
+.finding-detail-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 24px;
+
+    visibility: hidden;
+    opacity: 0;
+
+    transition:
+        opacity 0.18s ease,
+        visibility 0.18s ease;
+}
+
+.finding-detail-modal.visible {
+    visibility: visible;
+    opacity: 1;
+}
+
+.finding-detail-backdrop {
+    position: absolute;
+    inset: 0;
+
+    background: rgba(8, 12, 18, 0.62);
+    backdrop-filter: blur(3px);
+}
+
+.finding-detail-dialog {
+    position: relative;
+    z-index: 1;
+
+    width: min(620px, 100%);
+    max-height: min(720px, calc(100vh - 48px));
+
+    overflow-y: auto;
+
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+
+    padding: 24px;
+}
+
+.finding-detail-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+
+    width: 32px;
+    height: 32px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border: 1px solid var(--border);
+    border-radius: 6px;
+
+    background: var(--bg-raised);
+    color: var(--text-secondary);
+
+    font-size: 20px;
+    line-height: 1;
+
+    cursor: pointer;
+
+    transition:
+        color 0.15s ease,
+        border-color 0.15s ease,
+        background 0.15s ease;
+}
+
+.finding-detail-close:hover {
+    color: var(--text-primary);
+    border-color: var(--border-strong);
+}
+
+.finding-detail-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+
+    gap: 20px;
+
+    padding-right: 38px;
+    padding-bottom: 18px;
+
+    border-bottom: 1px solid var(--border-soft);
+}
+
+.finding-detail-kicker {
+    display: block;
+
+    margin-bottom: 7px;
+
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+
+    color: var(--text-tertiary);
+}
+
+.finding-detail-header h3 {
+    margin: 0;
+
+    font-family: var(--font-display);
+    font-size: 19px;
+    line-height: 1.25;
+
+    color: var(--text-primary);
+}
+
+.finding-detail-body {
+    padding-top: 20px;
+}
+
+.finding-detail-section + .finding-detail-section {
+    margin-top: 22px;
+}
+
+.finding-detail-label {
+    display: block;
+
+    margin-bottom: 8px;
+
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+
+    color: var(--text-tertiary);
+}
+
+.finding-detail-section p {
+    margin: 0;
+
+    font-size: 14px;
+    line-height: 1.65;
+
+    color: var(--text-primary);
+}
+
+.finding-recommended-section {
+    padding: 16px;
+
+    border: 1px solid var(--border);
+    border-radius: 8px;
+
+    background: var(--bg-raised);
+}
+
+.finding-recommended-section p {
+    font-weight: 500;
+}
+
+
+/* =========================================================
+   MODAL BODY LOCK
+   ========================================================= */
+
+body.modal-open {
+    overflow: hidden;
+}
+
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 620px) {
+
+    .finding-detail-modal {
+        padding: 12px;
+    }
+
+    .finding-detail-dialog {
+        padding: 20px;
+        max-height: calc(100vh - 24px);
+    }
+
+    .finding-detail-header {
+        flex-direction: column;
+        gap: 12px;
+    }
+}
     </style>
 </head>
 
