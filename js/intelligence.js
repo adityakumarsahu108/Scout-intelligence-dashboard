@@ -315,6 +315,11 @@ LOAD INTELLIGENCE
 let lastGeneratedAt = null;
 let relativeTimeInterval = null;
 
+// Remembers the full last-loaded payload so the PDF export can
+// build a report without re-fetching. Cleared to null only if a
+// fetch has never succeeded.
+let lastIntelligenceData = null;
+
 function startRelativeTimeTicker() {
 
     if (relativeTimeInterval) {
@@ -373,6 +378,7 @@ async function loadIntelligence() {
         setStatus("");
 
         lastGeneratedAt = data?.generatedAt || null;
+        lastIntelligenceData = data;
         setLive("ok", lastGeneratedAt ? `Updated ${relativeTime(lastGeneratedAt)}` : "Live");
         startRelativeTimeTicker();
 
@@ -3477,6 +3483,623 @@ function showPageError(message) {
 
 /*
 ====================================================
+PDF EXPORT — MANAGEMENT INTELLIGENCE REPORT
+====================================================
+Turns the currently loaded intelligence payload into a
+short, executive-readable PDF: what happened, what's
+risky right now, and what needs a decision. This section
+does not touch any of the rendering logic above — it only
+reads the same `data` shape that already powers the page.
+
+jsPDF is loaded lazily from a CDN the first time someone
+clicks "Export PDF", so normal page load isn't slowed down
+by a library most visits won't use.
+====================================================
+*/
+
+let jsPDFLoadPromise = null;
+
+function loadJsPDF() {
+
+    if (window.jspdf && window.jspdf.jsPDF) {
+        return Promise.resolve(window.jspdf.jsPDF);
+    }
+
+    if (jsPDFLoadPromise) {
+        return jsPDFLoadPromise;
+    }
+
+    jsPDFLoadPromise = new Promise((resolve, reject) => {
+
+        const script = document.createElement("script");
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+        script.async = true;
+
+        script.onload = () => {
+            if (window.jspdf && window.jspdf.jsPDF) {
+                resolve(window.jspdf.jsPDF);
+            } else {
+                reject(new Error("PDF library failed to initialize."));
+            }
+        };
+
+        script.onerror = () => {
+            jsPDFLoadPromise = null;
+            reject(new Error("Could not load the PDF library. Check your connection and try again."));
+        };
+
+        document.head.appendChild(script);
+
+    });
+
+    return jsPDFLoadPromise;
+
+}
+
+
+/*
+----------------------------------------------------
+SMALL FORMAT HELPERS (PDF-scoped, do not touch the
+existing formatNumber/formatPercentage used by the
+live dashboard — these are deliberately separate so
+PDF text stays plain and printable).
+----------------------------------------------------
+*/
+
+function pdfNum(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toLocaleString() : "0";
+}
+
+function pdfPct(value, digits = 1) {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${n.toFixed(digits)}%` : "0%";
+}
+
+
+/*
+----------------------------------------------------
+EXECUTIVE SUMMARY BUILDER
+
+Turns the raw payload into a handful of plain-English
+sentences plus a coarse "posture" reading (stable /
+elevated / needs immediate attention), so the reader
+doesn't have to interpret numbers themselves.
+----------------------------------------------------
+*/
+
+function buildExecutiveSummary(data) {
+
+    const alerts = data?.alerts || {};
+    const change = data?.comparison?.change || {};
+    const secIntel = data?.securityIntelligence || {};
+    const caseOutcome = data?.caseOutcome || secIntel?.caseOutcome || {};
+    const riskAcceptance = data?.riskAcceptance || secIntel?.riskAcceptance || {};
+    const cyera = data?.cyeraOperationalIntelligence || {};
+
+    const total = alerts.total ?? data?.totalAlerts ?? 0;
+    const highRisk = secIntel?.risk?.highOrCritical ?? 0;
+    const unassigned = alerts.unassigned ?? 0;
+    const highRiskUnassigned = cyera?.currentState?.highRiskUnassigned ?? 0;
+    const totalChange = Number(change.totalAlerts ?? 0);
+    const dispositionRate = caseOutcome?.disposition?.rate ?? 0;
+    const riskAcceptedRate = riskAcceptance?.rate ?? caseOutcome?.riskAcceptance?.rate ?? 0;
+    const avgAcceptanceAge = riskAcceptance?.aging?.averageDays ?? 0;
+
+    const trendWord = totalChange > 0 ? "increased" : totalChange < 0 ? "decreased" : "held steady";
+    const changeClause = totalChange !== 0
+        ? ` by ${pdfNum(Math.abs(totalChange))} (${pdfPct(Math.abs(change.totalPercentage ?? 0))})`
+        : "";
+
+    const lines = [
+        `Alert volume this period is ${pdfNum(total)}, which has ${trendWord}${changeClause} compared with the prior report.`,
+        `${pdfNum(highRisk)} alerts are currently rated high or critical severity, and ${pdfNum(highRiskUnassigned)} of those have no assigned owner \u2014 this is the single biggest exposure to watch.`,
+        `${pdfNum(unassigned)} alerts overall remain unassigned. ${pdfPct(dispositionRate)} of cases have reached a final disposition so far this period.`,
+        `${pdfPct(riskAcceptedRate)} of dispositioned cases were closed via risk acceptance rather than remediation, with an average acceptance age of ${Number(avgAcceptanceAge).toFixed(0)} days.`
+    ];
+
+    let posture = "Stable";
+    if (highRiskUnassigned > 0) posture = "Needs immediate attention";
+    else if (highRisk > 0) posture = "Elevated \u2014 monitor closely";
+
+    return { lines, posture, total, highRisk, highRiskUnassigned, unassigned };
+
+}
+
+
+/*
+----------------------------------------------------
+RECOMMENDATIONS BUILDER
+
+Simple, explainable thresholds rather than a black box:
+unowned high-risk alerts, a high unassigned rate, and
+stale risk acceptances are always worth a management
+callout. Falls back to the report's own recommended
+actions for its top findings.
+----------------------------------------------------
+*/
+
+function buildRecommendations(data) {
+
+    const recs = [];
+    const secIntel = data?.securityIntelligence || {};
+    const cyera = data?.cyeraOperationalIntelligence || {};
+    const riskAcceptance = data?.riskAcceptance || secIntel?.riskAcceptance || {};
+    const insights = Array.isArray(data?.insights) ? data.insights : [];
+
+    const highRiskUnassigned = cyera?.currentState?.highRiskUnassigned ?? 0;
+    const unassignedRate = cyera?.currentState?.unassignedRate ?? 0;
+    const over90 = riskAcceptance?.aging?.over90Days ?? 0;
+
+    if (highRiskUnassigned > 0) {
+        recs.push(`Assign an owner to the ${pdfNum(highRiskUnassigned)} unassigned high/critical alert(s) this week \u2014 these are the highest-risk open items on the board.`);
+    }
+
+    if (Number(unassignedRate) > 20) {
+        recs.push(`Unassigned alerts make up ${pdfPct(unassignedRate)} of the active queue. Consider rebalancing analyst workload or reviewing intake triage.`);
+    }
+
+    if (Number(over90) > 0) {
+        recs.push(`${pdfNum(over90)} risk-accepted item(s) are over 90 days old. Schedule a review to confirm each acceptance still holds.`);
+    }
+
+    insights
+        .filter(item => {
+            const p = String(item.priority || "").toLowerCase();
+            return p === "critical" || p === "high";
+        })
+        .slice(0, 3)
+        .forEach(item => {
+            if (item.recommendedAction) {
+                recs.push(item.recommendedAction);
+            }
+        });
+
+    if (!recs.length) {
+        recs.push("No urgent action items identified this period \u2014 continue routine monitoring.");
+    }
+
+    return recs;
+
+}
+
+
+/*
+----------------------------------------------------
+PDF LAYOUT PRIMITIVES
+
+Deliberately simple (no table plugin dependency): a
+page-break-aware cursor, section headers, wrapped
+paragraphs, bullet lists, a metric strip, and a plain
+column table. Everything is greyscale-friendly so it
+still reads fine printed in black and white.
+----------------------------------------------------
+*/
+
+const PDF_MARGIN = 48;
+const PDF_PAGE_WIDTH = 595.28;
+const PDF_PAGE_HEIGHT = 841.89;
+const PDF_CONTENT_WIDTH = PDF_PAGE_WIDTH - PDF_MARGIN * 2;
+
+const PDF_COLORS = {
+    text: [30, 32, 38],
+    muted: [110, 116, 128],
+    accentRed: [190, 45, 45],
+    accentAmber: [170, 115, 15],
+    accentGreen: [30, 135, 90],
+    accentBlue: [40, 100, 185],
+    line: [222, 226, 232]
+};
+
+function pdfToneColor(tone) {
+    if (tone === "red") return PDF_COLORS.accentRed;
+    if (tone === "amber") return PDF_COLORS.accentAmber;
+    if (tone === "green") return PDF_COLORS.accentGreen;
+    if (tone === "blue") return PDF_COLORS.accentBlue;
+    return PDF_COLORS.text;
+}
+
+function pdfEnsureSpace(doc, y, needed) {
+    if (y + needed > PDF_PAGE_HEIGHT - PDF_MARGIN) {
+        doc.addPage();
+        return PDF_MARGIN;
+    }
+    return y;
+}
+
+function pdfSectionTitle(doc, y, title) {
+    y = pdfEnsureSpace(doc, y, 34);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(...PDF_COLORS.text);
+    doc.text(title, PDF_MARGIN, y);
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.setLineWidth(0.75);
+    doc.line(PDF_MARGIN, y + 6, PDF_PAGE_WIDTH - PDF_MARGIN, y + 6);
+    return y + 22;
+}
+
+function pdfParagraph(doc, y, text, options = {}) {
+
+    const fontSize = options.fontSize || 10;
+    const color = options.color || PDF_COLORS.text;
+    const lineHeight = options.lineHeight || fontSize * 1.35;
+    const indent = options.indent || 0;
+
+    doc.setFont("helvetica", options.bold ? "bold" : "normal");
+    doc.setFontSize(fontSize);
+    doc.setTextColor(...color);
+
+    const lines = doc.splitTextToSize(String(text || ""), PDF_CONTENT_WIDTH - indent);
+
+    lines.forEach(line => {
+        y = pdfEnsureSpace(doc, y, lineHeight);
+        doc.text(line, PDF_MARGIN + indent, y);
+        y += lineHeight;
+    });
+
+    return y;
+
+}
+
+function pdfBulletList(doc, y, items, options = {}) {
+
+    const fontSize = options.fontSize || 10;
+
+    items.forEach(item => {
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(fontSize);
+        doc.setTextColor(...PDF_COLORS.text);
+
+        const lines = doc.splitTextToSize(String(item || ""), PDF_CONTENT_WIDTH - 14);
+
+        y = pdfEnsureSpace(doc, y, fontSize * 1.4);
+        doc.text("\u2022", PDF_MARGIN, y);
+
+        lines.forEach((line, i) => {
+            if (i > 0) {
+                y = pdfEnsureSpace(doc, y, fontSize * 1.4);
+            }
+            doc.text(line, PDF_MARGIN + 14, y);
+            y += fontSize * 1.4;
+        });
+
+        y += 4;
+
+    });
+
+    return y;
+
+}
+
+function pdfMetricRow(doc, y, metrics) {
+
+    y = pdfEnsureSpace(doc, y, 48);
+
+    const colWidth = PDF_CONTENT_WIDTH / metrics.length;
+
+    metrics.forEach((m, i) => {
+
+        const x = PDF_MARGIN + colWidth * i;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(...PDF_COLORS.muted);
+        doc.text(m.label.toUpperCase(), x, y);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(17);
+        doc.setTextColor(...pdfToneColor(m.tone));
+        doc.text(String(m.value), x, y + 19);
+
+    });
+
+    return y + 42;
+
+}
+
+function pdfTable(doc, y, headers, rows, colWidths) {
+
+    y = pdfEnsureSpace(doc, y, 26);
+
+    let x = PDF_MARGIN;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(...PDF_COLORS.muted);
+
+    headers.forEach((h, i) => {
+        doc.text(h, x, y);
+        x += colWidths[i];
+    });
+
+    y += 6;
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.setLineWidth(0.5);
+    doc.line(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y);
+    y += 14;
+
+    rows.forEach(row => {
+
+        y = pdfEnsureSpace(doc, y, 16);
+
+        x = PDF_MARGIN;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        doc.setTextColor(...PDF_COLORS.text);
+
+        row.forEach((cell, i) => {
+            const text = String(cell ?? "\u2014");
+            const fitted = doc.splitTextToSize(text, colWidths[i] - 6)[0] || "";
+            doc.text(fitted, x, y);
+            x += colWidths[i];
+        });
+
+        y += 15;
+
+    });
+
+    return y + 6;
+
+}
+
+
+/*
+----------------------------------------------------
+MAIN REPORT LAYOUT
+
+Order is deliberately management-first: headline
+numbers, plain-English summary, recommended actions,
+then supporting detail (findings, priority alerts,
+notable cases, analyst workload) for anyone who wants
+to go one level deeper.
+----------------------------------------------------
+*/
+
+function renderIntelligencePDF(doc, data) {
+
+    const report = data?.report || {};
+    const summary = buildExecutiveSummary(data);
+    const recommendations = buildRecommendations(data);
+
+    let y = PDF_MARGIN;
+
+    // HEADER
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.setTextColor(...PDF_COLORS.text);
+    doc.text("Security Intelligence Report", PDF_MARGIN, y);
+    y += 20;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...PDF_COLORS.muted);
+    doc.text(
+        `Report ${report.reportId || "\u2014"}   \u00B7   ${formatReportDate(report.reportDate)}   \u00B7   Generated ${formatDate(data?.generatedAt)}`,
+        PDF_MARGIN, y
+    );
+    y += 8;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...pdfToneColor(
+        summary.posture.startsWith("Needs") ? "red" : summary.posture.startsWith("Elevated") ? "amber" : "green"
+    ));
+    doc.text(`Overall posture: ${summary.posture}`, PDF_MARGIN, y + 14);
+    y += 24;
+
+    doc.setDrawColor(...PDF_COLORS.line);
+    doc.line(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y);
+    y += 24;
+
+    // KEY METRICS
+    y = pdfMetricRow(doc, y, [
+        { label: "Total alerts", value: pdfNum(summary.total) },
+        { label: "High / critical", value: pdfNum(summary.highRisk), tone: summary.highRisk > 0 ? "amber" : "green" },
+        { label: "Unassigned high-risk", value: pdfNum(summary.highRiskUnassigned), tone: summary.highRiskUnassigned > 0 ? "red" : "green" },
+        { label: "Unassigned total", value: pdfNum(summary.unassigned), tone: summary.unassigned > 0 ? "amber" : "green" }
+    ]);
+
+    y += 8;
+
+    // EXECUTIVE SUMMARY
+    y = pdfSectionTitle(doc, y, "Executive Summary");
+    summary.lines.forEach(line => {
+        y = pdfParagraph(doc, y, line);
+        y += 4;
+    });
+
+    y += 6;
+
+    // RECOMMENDED ACTIONS
+    y = pdfSectionTitle(doc, y, "Recommended Actions");
+    y = pdfBulletList(doc, y, recommendations);
+
+    y += 6;
+
+    // KEY FINDINGS
+    const insights = Array.isArray(data?.insights) ? [...data.insights] : [];
+    insights.sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
+
+    if (insights.length) {
+
+        y = pdfSectionTitle(doc, y, "Key Findings");
+
+        insights.slice(0, 8).forEach(insight => {
+
+            const tone = String(insight.priority || "low").toLowerCase();
+            const color = (tone === "critical" || tone === "high") ? PDF_COLORS.accentRed
+                : tone === "medium" ? PDF_COLORS.accentAmber
+                : PDF_COLORS.accentGreen;
+
+            y = pdfEnsureSpace(doc, y, 16);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(10);
+            doc.setTextColor(...color);
+            doc.text(`[${tone.toUpperCase()}] ${formatInsightType(insight.type)}`, PDF_MARGIN, y);
+            y += 13;
+
+            y = pdfParagraph(doc, y, insight.message || "No description available.", { fontSize: 9.5 });
+
+            if (insight.recommendedAction) {
+                y = pdfParagraph(doc, y, `Action: ${insight.recommendedAction}`, { fontSize: 9, color: PDF_COLORS.muted });
+            }
+
+            y += 8;
+
+        });
+
+    }
+
+    // TOP PRIORITY ALERTS
+    const queueAlerts = Array.isArray(data?.prioritization?.alerts) ? [...data.prioritization.alerts] : [];
+
+    if (queueAlerts.length) {
+
+        queueAlerts.sort((a, b) => (b.priorityScore ?? 0) - (a.priorityScore ?? 0));
+
+        y = pdfSectionTitle(doc, y, "Top Priority Alerts");
+        y = pdfTable(
+            doc, y,
+            ["#", "Alert", "Severity", "Status", "Score"],
+            queueAlerts.slice(0, 10).map((a, i) => [
+                i + 1,
+                (a.name || "Untitled alert").slice(0, 42),
+                a.severity || "\u2014",
+                a.status || "\u2014",
+                pdfNum(a.priorityScore ?? 0)
+            ]),
+            [24, 300, 70, 90, 40]
+        );
+
+    }
+
+    // NOTABLE HIGH-RISK CASES
+    const importantAlerts = Array.isArray(data?.cyeraDispositionIntelligence?.importantAlerts)
+        ? data.cyeraDispositionIntelligence.importantAlerts
+        : [];
+
+    if (importantAlerts.length) {
+
+        y = pdfSectionTitle(doc, y, "Notable High-Risk Cases");
+        y = pdfTable(
+            doc, y,
+            ["Alert", "Severity", "Status"],
+            importantAlerts.slice(0, 10).map(a => [
+                (a.name || "Untitled").slice(0, 55),
+                a.severity || "\u2014",
+                a.status || "\u2014"
+            ]),
+            [340, 100, 84]
+        );
+
+    }
+
+    // ANALYST WORKLOAD
+    const work = data?.cyeraWorkIntelligence;
+
+    if (work) {
+
+        const analystActivity = Array.isArray(work.analystActivity)
+            ? [...work.analystActivity].sort((a, b) => (b.handledActions ?? 0) - (a.handledActions ?? 0))
+            : [];
+
+        if (analystActivity.length) {
+
+            y = pdfSectionTitle(doc, y, "Analyst Workload");
+            y = pdfTable(
+                doc, y,
+                ["Analyst", "Handled", "Risk Accepted", "False Positive"],
+                analystActivity.slice(0, 10).map(a => [
+                    a.analyst || "Unknown",
+                    pdfNum(a.handledActions ?? 0),
+                    pdfNum(a.riskAcceptedActions ?? 0),
+                    pdfNum(a.falsePositiveActions ?? 0)
+                ]),
+                [220, 100, 110, 110]
+            );
+
+        }
+
+    }
+
+    // FOOTER on every page
+    const pageCount = doc.internal.getNumberOfPages();
+
+    for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(...PDF_COLORS.muted);
+        doc.text(`Page ${i} of ${pageCount}`, PDF_PAGE_WIDTH - PDF_MARGIN - 60, PDF_PAGE_HEIGHT - 24);
+        doc.text("Confidential \u2014 Security Intelligence", PDF_MARGIN, PDF_PAGE_HEIGHT - 24);
+    }
+
+}
+
+
+/*
+----------------------------------------------------
+EXPORT ENTRY POINT
+
+Wired to the "Export PDF" button. Guards against
+exporting before the first successful load, and gives
+visible loading/error feedback on the button itself.
+----------------------------------------------------
+*/
+
+async function generateIntelligencePDF() {
+
+    const button = getElement("pdf-export-button");
+
+    if (!lastIntelligenceData) {
+        window.alert("Intelligence data hasn't finished loading yet. Please wait a moment and try again.");
+        return;
+    }
+
+    const originalLabel = button ? button.textContent : "";
+
+    try {
+
+        if (button) {
+            button.disabled = true;
+            button.classList.add("is-loading");
+            button.textContent = "Preparing PDF\u2026";
+        }
+
+        const JsPDFCtor = await loadJsPDF();
+        const doc = new JsPDFCtor({ unit: "pt", format: "a4" });
+
+        renderIntelligencePDF(doc, lastIntelligenceData);
+
+        const report = lastIntelligenceData?.report || {};
+        const reportId = String(report.reportId || "report").replace(/[^a-z0-9_-]+/gi, "-");
+        const reportDate = report.reportDate || new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+        doc.save(`Security-Intelligence-${reportId}-${reportDate}.pdf`);
+
+    }
+    catch (error) {
+
+        console.error("PDF export failed:", error);
+        window.alert(`Could not generate the PDF: ${error.message}`);
+
+    }
+    finally {
+
+        if (button) {
+            button.disabled = false;
+            button.classList.remove("is-loading");
+            button.textContent = originalLabel || "Export PDF";
+        }
+
+    }
+
+}
+
+
+/*
+====================================================
 CURRENT-STATE TABS
 ====================================================
 Purely presentational: swaps which existing container
@@ -3564,6 +4187,52 @@ document.addEventListener("keydown", (event) => {
     }
 
 });
+
+
+/*
+====================================================
+PDF EXPORT BUTTON
+====================================================
+Looks for an existing #pdf-export-button in the page
+markup first (so you can style/place it by hand in the
+HTML). If it isn't there, this injects one immediately
+after the refresh button so the feature works out of the
+box with no HTML changes required.
+====================================================
+*/
+
+function ensurePdfExportButton() {
+
+    let button = getElement("pdf-export-button");
+
+    if (button) {
+        return button;
+    }
+
+    const refresh = getElement("refresh-button");
+
+    if (!refresh || !refresh.parentNode) {
+        return null;
+    }
+
+    button = document.createElement("button");
+    button.id = "pdf-export-button";
+    button.type = "button";
+    button.className = refresh.className || "btn-refresh";
+    button.style.marginLeft = "8px";
+    button.textContent = "Export PDF";
+
+    refresh.insertAdjacentElement("afterend", button);
+
+    return button;
+
+}
+
+const pdfExportButton = ensurePdfExportButton();
+
+if (pdfExportButton) {
+    pdfExportButton.addEventListener("click", generateIntelligencePDF);
+}
 
 
 /*
