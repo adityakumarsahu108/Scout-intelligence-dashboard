@@ -3666,6 +3666,300 @@ function buildRecommendations(data) {
 
 /*
 ----------------------------------------------------
+RISK INDEX
+
+A single, explainable 0-100 score for management to
+track period over period, instead of having to weigh
+a dozen separate metrics themselves. Every component is
+disclosed (weight + plain-English note) so it never reads
+as a black box \u2014 the score is a sum, not a model.
+
+Weighting rationale:
+  - Unowned high/critical alerts (30%): the most direct
+    measure of exposure sitting with nobody responsible.
+  - Overall unassigned rate (20%): a leading indicator of
+    triage/staffing strain.
+  - High-risk closed via acceptance rather than fixed (15%):
+    signals risk being tolerated instead of remediated.
+  - Stale risk acceptances 90d+ (15%): acceptances that were
+    never revisited are a governance gap.
+  - Alert volume growth (10%): rising inflow raises future risk
+    even if today's numbers look fine.
+  - Backlog carried over (10%): whether the team is keeping
+    pace with new alerts.
+----------------------------------------------------
+*/
+
+function computeRiskIndex(data) {
+
+    const secIntel = data?.securityIntelligence || {};
+    const cyera = data?.cyeraOperationalIntelligence || {};
+    const currentState = cyera?.currentState || {};
+    const riskAcceptance = data?.riskAcceptance || secIntel?.riskAcceptance || {};
+
+    const highRisk = Number(secIntel?.risk?.highOrCritical ?? 0);
+    const highRiskUnassigned = Number(currentState.highRiskUnassigned ?? 0);
+    const unassignedRate = Number(currentState.unassignedRate ?? 0);
+    const highRiskAcceptanceRate = Number(riskAcceptance?.highRisk?.rate ?? 0);
+    const totalAccepted = Number(riskAcceptance?.totalRiskAccepted ?? 0);
+    const over90 = Number(riskAcceptance?.aging?.over90Days ?? 0);
+    const stalePct = totalAccepted > 0 ? (over90 / totalAccepted) * 100 : 0;
+    const changePct = Number(data?.comparison?.change?.totalPercentage ?? 0);
+    const growthComponent = Math.max(0, changePct);
+    const carriedOverPct = Number(data?.lifecycle?.carriedOverPercentage ?? 0);
+    const unownedHighRiskRate = highRisk > 0 ? (highRiskUnassigned / highRisk) * 100 : 0;
+
+    const components = [
+        {
+            label: "Unowned high/critical alerts",
+            value: unownedHighRiskRate,
+            weight: 0.30,
+            note: `${pdfNum(highRiskUnassigned)} of ${pdfNum(highRisk)} high/critical alerts (${pdfPct(unownedHighRiskRate)}) have no assigned owner.`
+        },
+        {
+            label: "Overall unassigned rate",
+            value: unassignedRate,
+            weight: 0.20,
+            note: `${pdfPct(unassignedRate)} of the active alert queue is unassigned.`
+        },
+        {
+            label: "High-risk closed via acceptance",
+            value: highRiskAcceptanceRate,
+            weight: 0.15,
+            note: `${pdfPct(highRiskAcceptanceRate)} of high/critical alerts were closed by accepting the risk rather than remediating it.`
+        },
+        {
+            label: "Stale risk acceptances (90d+)",
+            value: stalePct,
+            weight: 0.15,
+            note: `${pdfNum(over90)} of ${pdfNum(totalAccepted)} accepted-risk items (${pdfPct(stalePct)}) are over 90 days old and due for re-review.`
+        },
+        {
+            label: "Alert volume growth",
+            value: Math.min(growthComponent, 100),
+            weight: 0.10,
+            note: changePct > 0
+                ? `Alert volume grew ${pdfPct(changePct)} versus the prior report.`
+                : `Alert volume did not grow versus the prior report.`
+        },
+        {
+            label: "Backlog carried over",
+            value: carriedOverPct,
+            weight: 0.10,
+            note: `${pdfPct(carriedOverPct)} of current alerts were carried over rather than newly opened this period.`
+        }
+    ];
+
+    const score = components.reduce(
+        (sum, c) => sum + (Math.max(0, Math.min(100, c.value)) * c.weight),
+        0
+    );
+
+    let band = "Low";
+    let tone = "green";
+
+    if (score >= 66) {
+        band = "High";
+        tone = "red";
+    } else if (score >= 33) {
+        band = "Moderate";
+        tone = "amber";
+    }
+
+    const drivers = [...components]
+        .sort((a, b) => (b.value * b.weight) - (a.value * a.weight))
+        .slice(0, 3)
+        .map(c => c.note);
+
+    return { score, band, tone, components, drivers };
+
+}
+
+
+/*
+----------------------------------------------------
+TREND & VELOCITY
+
+Answers a question raw counts don't: is the team keeping
+pace with new alerts, or is the backlog quietly growing?
+----------------------------------------------------
+*/
+
+function buildVelocityInsight(data) {
+
+    const lifecycle = data?.lifecycle || {};
+    const change = data?.comparison?.change || {};
+
+    const total = Number(lifecycle.currentAlerts ?? lifecycle.total ?? 0);
+    const newAlerts = Number(lifecycle.new ?? 0);
+    const carried = Number(lifecycle.carriedOver ?? 0);
+
+    const newPct = Number(lifecycle.newPercentage ?? (total ? (newAlerts / total) * 100 : 0));
+    const carriedPct = Number(lifecycle.carriedOverPercentage ?? (total ? (carried / total) * 100 : 0));
+    const totalChange = Number(change.totalAlerts ?? 0);
+
+    const pace = carriedPct > 55
+        ? "the queue is growing faster than the team is closing it \u2014 backlog is building up"
+        : carriedPct > 35
+        ? "the team is roughly keeping pace, but a meaningful backlog persists"
+        : "the team is keeping pace with new alerts and backlog is not accumulating";
+
+    return `Of the ${pdfNum(total)} alerts currently tracked, ${pdfNum(newAlerts)} (${pdfPct(newPct)}) are new this reporting period and ${pdfNum(carried)} (${pdfPct(carriedPct)}) were carried over from before. In plain terms, ${pace}. Total alert volume has ${totalChange > 0 ? "risen" : totalChange < 0 ? "fallen" : "stayed flat"} since the last report.`;
+
+}
+
+
+/*
+----------------------------------------------------
+CONCENTRATION & GOVERNANCE
+
+Surfaces whether "resolved" risk is actually clustered
+around one recurring issue or one approver \u2014 a pattern
+that looks fine in aggregate but hides a systemic problem.
+----------------------------------------------------
+*/
+
+function buildConcentrationInsight(data) {
+
+    const secIntel = data?.securityIntelligence || {};
+    const riskAcceptance = data?.riskAcceptance || secIntel?.riskAcceptance || {};
+    const concentration = riskAcceptance?.concentration || {};
+
+    const topPatterns = Array.isArray(concentration.topAlertPatterns) ? concentration.topAlertPatterns : [];
+    const topOwners = Array.isArray(concentration.topOwners) ? concentration.topOwners : [];
+    const totalAccepted = Number(riskAcceptance?.totalRiskAccepted ?? 0);
+
+    const lines = [];
+
+    if (topPatterns.length && totalAccepted > 0) {
+
+        const top = topPatterns[0];
+        const rate = Number(top.rate ?? (totalAccepted ? (top.count / totalAccepted) * 100 : 0));
+
+        lines.push(
+            `The single largest driver of accepted risk is "${top.name}", accounting for ${pdfNum(top.count)} acceptance(s) (${pdfPct(rate)} of all accepted risk).` +
+            (rate > 30
+                ? " That concentration suggests a systemic issue worth fixing at the source rather than accepting repeatedly."
+                : " This is a moderate concentration and worth periodic review.")
+        );
+
+    }
+
+    if (topOwners.length && totalAccepted > 0) {
+
+        const top = topOwners[0];
+        const rate = Number(top.rate ?? (totalAccepted ? (top.count / totalAccepted) * 100 : 0));
+
+        lines.push(
+            `${top.name} owns the most risk acceptances (${pdfNum(top.count)}, ${pdfPct(rate)} of the total).` +
+            (rate > 40 ? " That level of concentration on one approver is worth a second opinion before further acceptances go through." : "")
+        );
+
+    }
+
+    if (!lines.length) {
+        lines.push("No significant concentration in risk-acceptance patterns or owners was detected this period.");
+    }
+
+    return lines;
+
+}
+
+
+/*
+----------------------------------------------------
+TEAM CAPACITY
+
+Flags a "bus factor" risk: work concentrated on a single
+analyst is a resilience problem even when throughput
+looks healthy in aggregate.
+----------------------------------------------------
+*/
+
+function buildCapacityInsight(data) {
+
+    const work = data?.cyeraWorkIntelligence || {};
+    const activity = Array.isArray(work.analystActivity) ? [...work.analystActivity] : [];
+    const summary = work.analystActivitySummary || {};
+
+    const totalHandled = Number(
+        summary.totalHandledActions ?? activity.reduce((sum, a) => sum + (a.handledActions || 0), 0)
+    );
+
+    if (!activity.length || !totalHandled) {
+        return "No analyst activity data available for this period to assess team capacity.";
+    }
+
+    const sorted = [...activity].sort((a, b) => (b.handledActions ?? 0) - (a.handledActions ?? 0));
+    const top = sorted[0];
+    const topShare = totalHandled ? (Number(top.handledActions || 0) / totalHandled) * 100 : 0;
+    const analystCount = summary.analysts ?? activity.length;
+
+    let note = `${pdfNum(analystCount)} analyst(s) handled ${pdfNum(totalHandled)} action(s) this period. ${top.analyst || "The top analyst"} alone accounted for ${pdfPct(topShare)} of all handled actions.`;
+
+    if (topShare > 50) {
+        note += " Work is heavily concentrated on a single analyst \u2014 this is a capacity risk if that person is unavailable.";
+    } else if (topShare > 35) {
+        note += " Workload is somewhat concentrated; worth keeping an eye on distribution.";
+    } else {
+        note += " Workload appears reasonably distributed across the team.";
+    }
+
+    return note;
+
+}
+
+
+/*
+----------------------------------------------------
+DECISIONS REQUIRING SIGN-OFF
+
+Deliberately separate from "Recommended Actions": these
+are the items that specifically need a manager's yes/no
+or resourcing call, not an analyst's next task.
+----------------------------------------------------
+*/
+
+function buildDecisionsNeeded(data) {
+
+    const decisions = [];
+    const secIntel = data?.securityIntelligence || {};
+    const cyera = data?.cyeraOperationalIntelligence || {};
+    const riskAcceptance = data?.riskAcceptance || secIntel?.riskAcceptance || {};
+    const currentState = cyera?.currentState || {};
+
+    const highRiskUnassigned = Number(currentState.highRiskUnassigned ?? 0);
+    const over90 = Number(riskAcceptance?.aging?.over90Days ?? 0);
+    const highRiskAcceptedRate = Number(riskAcceptance?.highRisk?.rate ?? 0);
+    const unassignedRate = Number(currentState.unassignedRate ?? 0);
+
+    if (highRiskUnassigned > 0) {
+        decisions.push(`Confirm ownership: who is picking up the ${pdfNum(highRiskUnassigned)} unassigned high/critical alert(s), and by when?`);
+    }
+
+    if (over90 > 0) {
+        decisions.push(`Re-approve or reverse: ${pdfNum(over90)} risk acceptance(s) are over 90 days old and need a documented re-approval or a remediation plan.`);
+    }
+
+    if (highRiskAcceptedRate > 25) {
+        decisions.push(`Policy check: ${pdfPct(highRiskAcceptedRate)} of high/critical alerts are being closed by risk acceptance rather than remediation \u2014 confirm this is intentional and within risk appetite.`);
+    }
+
+    if (unassignedRate > 25) {
+        decisions.push(`Staffing: an unassigned rate of ${pdfPct(unassignedRate)} may indicate the team needs more capacity or a triage process change.`);
+    }
+
+    if (!decisions.length) {
+        decisions.push("No items require executive sign-off this period.");
+    }
+
+    return decisions;
+
+}
+
+
+/*
+----------------------------------------------------
 PDF LAYOUT PRIMITIVES
 
 Deliberately simple (no table plugin dependency): a
@@ -3799,6 +4093,36 @@ function pdfMetricRow(doc, y, metrics) {
 
 }
 
+function pdfGaugeBar(doc, y, label, scoreOutOf100, tone) {
+
+    y = pdfEnsureSpace(doc, y, 40);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...PDF_COLORS.text);
+    doc.text(label, PDF_MARGIN, y);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(...pdfToneColor(tone));
+    doc.text(`${Math.round(scoreOutOf100)} / 100`, PDF_PAGE_WIDTH - PDF_MARGIN - 42, y);
+
+    y += 8;
+
+    const barWidth = PDF_CONTENT_WIDTH;
+    const barHeight = 8;
+    const clamped = Math.max(0, Math.min(100, scoreOutOf100));
+
+    doc.setFillColor(233, 236, 240);
+    doc.rect(PDF_MARGIN, y, barWidth, barHeight, "F");
+
+    doc.setFillColor(...pdfToneColor(tone));
+    doc.rect(PDF_MARGIN, y, barWidth * (clamped / 100), barHeight, "F");
+
+    return y + barHeight + 16;
+
+}
+
 function pdfTable(doc, y, headers, rows, colWidths) {
 
     y = pdfEnsureSpace(doc, y, 26);
@@ -3861,6 +4185,7 @@ function renderIntelligencePDF(doc, data) {
     const report = data?.report || {};
     const summary = buildExecutiveSummary(data);
     const recommendations = buildRecommendations(data);
+    const riskIndex = computeRiskIndex(data);
 
     let y = PDF_MARGIN;
 
@@ -3882,10 +4207,8 @@ function renderIntelligencePDF(doc, data) {
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
-    doc.setTextColor(...pdfToneColor(
-        summary.posture.startsWith("Needs") ? "red" : summary.posture.startsWith("Elevated") ? "amber" : "green"
-    ));
-    doc.text(`Overall posture: ${summary.posture}`, PDF_MARGIN, y + 14);
+    doc.setTextColor(...pdfToneColor(riskIndex.tone));
+    doc.text(`Overall risk posture: ${riskIndex.band}  (Risk Index ${Math.round(riskIndex.score)}/100)`, PDF_MARGIN, y + 14);
     y += 24;
 
     doc.setDrawColor(...PDF_COLORS.line);
@@ -3914,6 +4237,42 @@ function renderIntelligencePDF(doc, data) {
     // RECOMMENDED ACTIONS
     y = pdfSectionTitle(doc, y, "Recommended Actions");
     y = pdfBulletList(doc, y, recommendations);
+
+    y += 6;
+
+    // RISK INDEX
+    y = pdfSectionTitle(doc, y, "Risk Index");
+    y = pdfGaugeBar(doc, y, riskIndex.band, riskIndex.score, riskIndex.tone);
+    y = pdfParagraph(doc, y, "Top drivers of this score:", { fontSize: 9.5, bold: true, color: PDF_COLORS.muted });
+    y += 2;
+    y = pdfBulletList(doc, y, riskIndex.drivers, { fontSize: 9.5 });
+
+    y += 6;
+
+    // TREND & VELOCITY
+    y = pdfSectionTitle(doc, y, "Trend & Velocity");
+    y = pdfParagraph(doc, y, buildVelocityInsight(data));
+
+    y += 6;
+
+    // CONCENTRATION & GOVERNANCE
+    y = pdfSectionTitle(doc, y, "Concentration & Governance");
+    buildConcentrationInsight(data).forEach(line => {
+        y = pdfParagraph(doc, y, line);
+        y += 4;
+    });
+
+    y += 2;
+
+    // TEAM CAPACITY
+    y = pdfSectionTitle(doc, y, "Team Capacity");
+    y = pdfParagraph(doc, y, buildCapacityInsight(data));
+
+    y += 6;
+
+    // DECISIONS REQUIRING SIGN-OFF
+    y = pdfSectionTitle(doc, y, "Decisions Requiring Sign-Off");
+    y = pdfBulletList(doc, y, buildDecisionsNeeded(data));
 
     y += 6;
 
