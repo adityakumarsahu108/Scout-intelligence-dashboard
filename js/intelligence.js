@@ -203,6 +203,43 @@ function priorityClass(priority) {
 
 /*
 ====================================================
+CHART COLOR TOKENS
+====================================================
+Chart.js can't read CSS custom properties directly for
+canvas fills, so the same palette used across the page
+(:root tokens in index.html) is mirrored here as plain
+hex/rgba values. Keep these in sync if the CSS palette
+ever changes.
+====================================================
+*/
+
+const CHART_COLORS = {
+    red: "#ef5350",
+    amber: "#e8a63c",
+    green: "#3fb968",
+    blue: "#5b9df9",
+    grey: "#8d99aa",
+    textPrimary: "#eaf0f6",
+    textSecondary: "#8d99aa",
+    textTertiary: "#56616f",
+    gridLine: "rgba(141, 153, 170, 0.10)",
+    panelBg: "#1a222c"
+};
+
+function chartToneColor(tone) {
+    return CHART_COLORS[tone] || CHART_COLORS.grey;
+}
+
+// Keeps Chart.js's default font in step with the rest of the page.
+if (window.Chart) {
+    Chart.defaults.font.family =
+        "'IBM Plex Mono', ui-monospace, monospace";
+    Chart.defaults.color = CHART_COLORS.textSecondary;
+}
+
+
+/*
+====================================================
 PRESENTATION HELPERS
 (purely cosmetic — do not touch data shape or logic)
 ====================================================
@@ -431,6 +468,9 @@ function renderIntelligence(data) {
     renderHighRiskCases(data);
     renderReport(data);
     renderGeneratedAt(data);
+
+    // Chart panel (severity / status / comparison / lifecycle)
+    renderCharts(data);
 
 }
 
@@ -3430,6 +3470,1065 @@ function renderGeneratedAt(data) {
 
 }
 
+/*
+====================================================
+VISUAL ANALYTICS — PREMIUM CHART.JS PANEL
+====================================================
+
+Improved visual treatment for:
+  1. Severity donut
+  2. Status donut
+  3. Current vs Previous comparison
+  4. New vs Carried-over lifecycle
+
+Keeps the existing data structure and canvas IDs.
+====================================================
+*/
+
+window.__intelCharts = window.__intelCharts || {};
+
+
+/* ==================================================
+   CHART THEME
+================================================== */
+
+const PREMIUM_CHART = {
+
+    bg: "#0f1720",
+    panel: "#151e28",
+
+    text: "#f4f7fa",
+    secondary: "#9aa8b8",
+    tertiary: "#687788",
+
+    grid: "rgba(255,255,255,0.055)",
+
+    blue: "#4f8cff",
+    blueSoft: "rgba(79,140,255,0.18)",
+
+    green: "#36c98f",
+    yellow: "#f2c94c",
+    orange: "#f2994a",
+    red: "#ff5c6c",
+
+    gray: "#64748b",
+
+    tooltipBg: "#111923",
+    tooltipBorder: "rgba(255,255,255,0.10)"
+};
+
+
+/* ==================================================
+   DESTROY EXISTING CHART
+================================================== */
+
+function destroyChart(key) {
+
+    const existing = window.__intelCharts[key];
+
+    if (existing) {
+        existing.destroy();
+        delete window.__intelCharts[key];
+    }
+
+}
+
+
+/* ==================================================
+   EMPTY STATE
+================================================== */
+
+function chartEmptyState(canvasId, message) {
+
+    const canvas = getElement(canvasId);
+
+    if (!canvas || !canvas.parentElement) {
+        return;
+    }
+
+    destroyChart(canvasId);
+
+    canvas.style.display = "none";
+
+    let note = canvas.parentElement.querySelector(".chart-empty-note");
+
+    if (!note) {
+
+        note = document.createElement("div");
+
+        note.className = "chart-empty-note empty-state";
+
+        note.style.cssText = `
+            width:100%;
+            min-height:180px;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:10px;
+            color:${PREMIUM_CHART.tertiary};
+            font-size:13px;
+            text-align:center;
+        `;
+
+        canvas.parentElement.appendChild(note);
+    }
+
+    note.innerHTML = `
+        <div style="
+            width:38px;
+            height:38px;
+            border-radius:50%;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background:rgba(255,255,255,0.035);
+            border:1px solid rgba(255,255,255,0.07);
+            font-size:18px;
+        ">○</div>
+
+        <span>${escapeHTML(message)}</span>
+    `;
+
+}
+
+
+/* ==================================================
+   CLEAR EMPTY STATE
+================================================== */
+
+function clearChartEmptyState(canvasId) {
+
+    const canvas = getElement(canvasId);
+
+    if (!canvas) {
+        return;
+    }
+
+    canvas.style.display = "";
+
+    const note =
+        canvas.parentElement?.querySelector(".chart-empty-note");
+
+    if (note) {
+        note.remove();
+    }
+
+}
+
+
+/* ==================================================
+   PREMIUM TOOLTIP
+================================================== */
+
+const premiumTooltip = {
+
+    backgroundColor: PREMIUM_CHART.tooltipBg,
+
+    borderColor: PREMIUM_CHART.tooltipBorder,
+
+    borderWidth: 1,
+
+    titleColor: PREMIUM_CHART.text,
+
+    bodyColor: PREMIUM_CHART.secondary,
+
+    padding: {
+        top: 12,
+        bottom: 12,
+        left: 14,
+        right: 14
+    },
+
+    cornerRadius: 10,
+
+    displayColors: true,
+
+    boxPadding: 5,
+
+    titleFont: {
+        size: 12,
+        weight: "600"
+    },
+
+    bodyFont: {
+        size: 12
+    },
+
+    callbacks: {
+
+        label: (ctx) => {
+
+            const value = Number(ctx.parsed);
+
+            const values = ctx.dataset.data || [];
+
+            const total =
+                values.reduce(
+                    (sum, current) =>
+                        sum + Number(current || 0),
+                    0
+                );
+
+            const percentage =
+                total > 0
+                    ? ((value / total) * 100).toFixed(1)
+                    : "0.0";
+
+            return ` ${formatNumber(value)}  ·  ${percentage}%`;
+        }
+
+    }
+
+};
+
+
+/* ==================================================
+   LEGEND
+================================================== */
+
+function renderLegend(elementId, entries) {
+
+    const el = getElement(elementId);
+
+    if (!el) {
+        return;
+    }
+
+    if (!entries.length) {
+        el.innerHTML = "";
+        return;
+    }
+
+    el.innerHTML = entries.map(entry => `
+        
+        <span class="chart-legend-item"
+            style="
+                display:inline-flex;
+                align-items:center;
+                gap:7px;
+                margin:4px 12px 4px 0;
+                font-size:11px;
+                color:${PREMIUM_CHART.secondary};
+                white-space:nowrap;
+            "
+        >
+
+            <span
+                class="chart-legend-swatch"
+                style="
+                    width:8px;
+                    height:8px;
+                    border-radius:50%;
+                    background:${entry.color};
+                    box-shadow:0 0 0 3px ${entry.color}22;
+                    flex:none;
+                "
+            ></span>
+
+            <span>
+                ${escapeHTML(entry.label)}
+            </span>
+
+            <strong
+                style="
+                    color:${PREMIUM_CHART.text};
+                    font-weight:600;
+                "
+            >
+                ${formatNumber(entry.value)}
+            </strong>
+
+        </span>
+
+    `).join("");
+
+}
+
+
+/* ==================================================
+   CENTER TEXT PLUGIN
+================================================== */
+
+const centerTextPlugin = {
+
+    id: "centerText",
+
+    afterDraw(chart, args, pluginOptions) {
+
+        if (!pluginOptions || !pluginOptions.display) {
+            return;
+        }
+
+        const {
+            ctx,
+            chartArea
+        } = chart;
+
+        const x =
+            (chartArea.left + chartArea.right) / 2;
+
+        const y =
+            (chartArea.top + chartArea.bottom) / 2;
+
+        ctx.save();
+
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        /* Main number */
+
+        ctx.font =
+            "700 25px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+
+        ctx.fillStyle =
+            PREMIUM_CHART.text;
+
+        ctx.fillText(
+            formatNumber(pluginOptions.value),
+            x,
+            y - 5
+        );
+
+        /* Label */
+
+        ctx.font =
+            "500 9px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+
+        ctx.fillStyle =
+            PREMIUM_CHART.tertiary;
+
+        ctx.fillText(
+            pluginOptions.label || "TOTAL",
+            x,
+            y + 18
+        );
+
+        ctx.restore();
+    }
+
+};
+
+
+/* ==================================================
+   DONUT CHART
+================================================== */
+
+function renderDonutChart(
+    canvasId,
+    legendId,
+    entries,
+    options = {}
+) {
+
+    if (!window.Chart) {
+        return;
+    }
+
+    const canvas = getElement(canvasId);
+
+    if (!canvas) {
+        return;
+    }
+
+    destroyChart(canvasId);
+
+    if (!entries.length) {
+
+        chartEmptyState(
+            canvasId,
+            options.emptyMessage || "No data available."
+        );
+
+        renderLegend(legendId, []);
+
+        return;
+    }
+
+    clearChartEmptyState(canvasId);
+
+    const total =
+        entries.reduce(
+            (sum, item) =>
+                sum + Number(item.value || 0),
+            0
+        );
+
+    window.__intelCharts[canvasId] =
+        new Chart(
+            canvas.getContext("2d"),
+            {
+
+                type: "doughnut",
+
+                data: {
+
+                    labels:
+                        entries.map(e => e.label),
+
+                    datasets: [
+
+                        {
+                            data:
+                                entries.map(e => e.value),
+
+                            backgroundColor:
+                                entries.map(e => e.color),
+
+                            borderColor:
+                                PREMIUM_CHART.panel,
+
+                            borderWidth: 3,
+
+                            hoverBorderWidth: 3,
+
+                            hoverOffset: 7,
+
+                            spacing: 2
+                        }
+
+                    ]
+                },
+
+                plugins: [
+                    centerTextPlugin
+                ],
+
+                options: {
+
+                    responsive: true,
+
+                    maintainAspectRatio: false,
+
+                    cutout: "73%",
+
+                    rotation: -90,
+
+                    animation: {
+
+                        duration: 700,
+
+                        easing: "easeOutQuart"
+                    },
+
+                    plugins: {
+
+                        legend: {
+                            display: false
+                        },
+
+                        tooltip: premiumTooltip,
+
+                        centerText: {
+
+                            display: true,
+
+                            value: total,
+
+                            label:
+                                options.centerLabel ||
+                                "TOTAL"
+                        }
+                    },
+
+                    interaction: {
+
+                        intersect: false,
+
+                        mode: "nearest"
+                    }
+                }
+            }
+        );
+
+    renderLegend(
+        legendId,
+        entries.map(e => ({
+            label: e.label,
+            value: e.value,
+            color: e.color
+        }))
+    );
+
+}
+
+
+/* ==================================================
+   COMPARISON CHART
+================================================== */
+
+function renderComparisonChart(data) {
+
+    const canvasId = "chart-comparison";
+
+    const canvas =
+        getElement(canvasId);
+
+    if (!canvas || !window.Chart) {
+        return;
+    }
+
+    destroyChart(canvasId);
+
+    const comparison =
+        data?.comparison;
+
+    if (!comparison) {
+
+        chartEmptyState(
+            canvasId,
+            "No comparison data available."
+        );
+
+        return;
+    }
+
+    const currentReport =
+        comparison.currentReport || {};
+
+    const previousReport =
+        comparison.previousReport || {};
+
+    const labels = [
+        "Total Alerts",
+        "Cyera",
+        "Purview"
+    ];
+
+    const current = [
+
+        currentReport.totalAlerts ??
+            comparison.current ??
+            0,
+
+        currentReport.cyera ??
+            0,
+
+        currentReport.purview ??
+            0
+
+    ];
+
+    const previous = [
+
+        previousReport.totalAlerts ??
+            comparison.previous ??
+            0,
+
+        previousReport.cyera ??
+            0,
+
+        previousReport.purview ??
+            0
+
+    ];
+
+    if (
+        !current.some(v => v > 0) &&
+        !previous.some(v => v > 0)
+    ) {
+
+        chartEmptyState(
+            canvasId,
+            "No comparison data available."
+        );
+
+        return;
+    }
+
+    clearChartEmptyState(canvasId);
+
+
+    /* ----------------------------------------------
+       Gradient helper
+    ---------------------------------------------- */
+
+    const ctx =
+        canvas.getContext("2d");
+
+    const currentGradient =
+        ctx.createLinearGradient(
+            0,
+            0,
+            0,
+            canvas.height
+        );
+
+    currentGradient.addColorStop(
+        0,
+        PREMIUM_CHART.blue
+    );
+
+    currentGradient.addColorStop(
+        1,
+        "#3268d8"
+    );
+
+
+    const previousGradient =
+        ctx.createLinearGradient(
+            0,
+            0,
+            0,
+            canvas.height
+        );
+
+    previousGradient.addColorStop(
+        0,
+        "rgba(148,163,184,0.42)"
+    );
+
+    previousGradient.addColorStop(
+        1,
+        "rgba(100,116,139,0.20)"
+    );
+
+
+    window.__intelCharts[canvasId] =
+        new Chart(
+            ctx,
+            {
+
+                type: "bar",
+
+                data: {
+
+                    labels,
+
+                    datasets: [
+
+                        {
+                            label: "Previous",
+
+                            data: previous,
+
+                            backgroundColor:
+                                previousGradient,
+
+                            borderColor:
+                                "rgba(148,163,184,0.45)",
+
+                            borderWidth: 1,
+
+                            borderRadius: 7,
+
+                            borderSkipped: false,
+
+                            maxBarThickness: 32
+                        },
+
+                        {
+                            label: "Current",
+
+                            data: current,
+
+                            backgroundColor:
+                                currentGradient,
+
+                            borderColor:
+                                PREMIUM_CHART.blue,
+
+                            borderWidth: 1,
+
+                            borderRadius: 7,
+
+                            borderSkipped: false,
+
+                            maxBarThickness: 32
+                        }
+
+                    ]
+                },
+
+                options: {
+
+                    responsive: true,
+
+                    maintainAspectRatio: false,
+
+                    animation: {
+
+                        duration: 700,
+
+                        easing: "easeOutQuart"
+                    },
+
+                    interaction: {
+
+                        intersect: false,
+
+                        mode: "index"
+                    },
+
+                    scales: {
+
+                        x: {
+
+                            border: {
+                                display: false
+                            },
+
+                            ticks: {
+
+                                color:
+                                    PREMIUM_CHART.secondary,
+
+                                font: {
+
+                                    size: 10,
+
+                                    weight: "500"
+                                },
+
+                                padding: 8
+                            },
+
+                            grid: {
+
+                                display: false
+                            }
+                        },
+
+                        y: {
+
+                            beginAtZero: true,
+
+                            border: {
+                                display: false
+                            },
+
+                            ticks: {
+
+                                color:
+                                    PREMIUM_CHART.tertiary,
+
+                                font: {
+                                    size: 9
+                                },
+
+                                padding: 8
+                            },
+
+                            grid: {
+
+                                color:
+                                    PREMIUM_CHART.grid,
+
+                                drawTicks: false
+                            }
+                        }
+                    },
+
+                    plugins: {
+
+                        legend: {
+
+                            position: "bottom",
+
+                            labels: {
+
+                                color:
+                                    PREMIUM_CHART.secondary,
+
+                                usePointStyle: true,
+
+                                pointStyle: "circle",
+
+                                boxWidth: 7,
+
+                                boxHeight: 7,
+
+                                padding: 18,
+
+                                font: {
+
+                                    size: 10,
+
+                                    weight: "500"
+                                }
+                            }
+                        },
+
+                        tooltip: {
+
+                            ...premiumTooltip,
+
+                            callbacks: {
+
+                                label: (ctx) =>
+                                    ` ${formatNumber(ctx.parsed.y)}`
+                            }
+                        }
+                    }
+                }
+            }
+        );
+
+}
+
+
+/* ==================================================
+   LIFECYCLE CHART
+================================================== */
+
+function renderLifecycleChart(data) {
+
+    const canvasId =
+        "chart-lifecycle";
+
+    const canvas =
+        getElement(canvasId);
+
+    if (!canvas || !window.Chart) {
+        return;
+    }
+
+    destroyChart(canvasId);
+
+    const lifecycle =
+        data?.lifecycle;
+
+    if (!lifecycle) {
+
+        chartEmptyState(
+            canvasId,
+            "No lifecycle data available."
+        );
+
+        return;
+    }
+
+    const newAlerts =
+        Number(lifecycle.new ?? 0);
+
+    const carriedOver =
+        Number(lifecycle.carriedOver ?? 0);
+
+    if (
+        newAlerts <= 0 &&
+        carriedOver <= 0
+    ) {
+
+        chartEmptyState(
+            canvasId,
+            "No lifecycle data available."
+        );
+
+        return;
+    }
+
+    clearChartEmptyState(canvasId);
+
+    const total =
+        newAlerts + carriedOver;
+
+
+    window.__intelCharts[canvasId] =
+        new Chart(
+            canvas.getContext("2d"),
+            {
+
+                type: "doughnut",
+
+                data: {
+
+                    labels: [
+                        "New this report",
+                        "Carried over"
+                    ],
+
+                    datasets: [
+
+                        {
+                            data: [
+                                newAlerts,
+                                carriedOver
+                            ],
+
+                            backgroundColor: [
+                                PREMIUM_CHART.blue,
+                                PREMIUM_CHART.gray
+                            ],
+
+                            borderColor:
+                                PREMIUM_CHART.panel,
+
+                            borderWidth: 3,
+
+                            hoverOffset: 7,
+
+                            spacing: 2
+                        }
+
+                    ]
+                },
+
+                plugins: [
+                    centerTextPlugin
+                ],
+
+                options: {
+
+                    responsive: true,
+
+                    maintainAspectRatio: false,
+
+                    cutout: "73%",
+
+                    rotation: -90,
+
+                    animation: {
+
+                        duration: 700,
+
+                        easing: "easeOutQuart"
+                    },
+
+                    plugins: {
+
+                        legend: {
+
+                            position: "bottom",
+
+                            labels: {
+
+                                color:
+                                    PREMIUM_CHART.secondary,
+
+                                usePointStyle: true,
+
+                                pointStyle: "circle",
+
+                                boxWidth: 7,
+
+                                boxHeight: 7,
+
+                                padding: 18,
+
+                                font: {
+
+                                    size: 10,
+
+                                    weight: "500"
+                                }
+                            }
+                        },
+
+                        tooltip: premiumTooltip,
+
+                        centerText: {
+
+                            display: true,
+
+                            value: total,
+
+                            label: "TOTAL"
+                        }
+                    }
+                }
+            }
+        );
+
+}
+
+
+/* ==================================================
+   MAIN RENDER
+================================================== */
+
+function renderCharts(data) {
+
+    if (!window.Chart) {
+
+        [
+            "chart-severity",
+            "chart-status",
+            "chart-comparison",
+            "chart-lifecycle"
+
+        ].forEach(id => {
+
+            chartEmptyState(
+                id,
+                "Chart library unavailable."
+            );
+
+        });
+
+        return;
+    }
+
+
+    const alerts =
+        data?.alerts || {};
+
+
+    /* ----------------------------------------------
+       Severity
+    ---------------------------------------------- */
+
+    const severityEntries =
+        objectToEntries(alerts.severity)
+            .map(e => ({
+                ...e,
+                color:
+                    chartToneColor(
+                        severityToTone(e.label)
+                    )
+            }));
+
+
+    /* ----------------------------------------------
+       Status
+    ---------------------------------------------- */
+
+    const statusEntries =
+        objectToEntries(alerts.status)
+            .map(e => ({
+                ...e,
+                color:
+                    chartToneColor(
+                        statusToTone(e.label)
+                    )
+            }));
+
+
+    renderDonutChart(
+        "chart-severity",
+        "chart-severity-legend",
+        severityEntries,
+        {
+            emptyMessage:
+                "No severity data available.",
+
+            centerLabel:
+                "ALERTS"
+        }
+    );
+
+
+    renderDonutChart(
+        "chart-status",
+        "chart-status-legend",
+        statusEntries,
+        {
+            emptyMessage:
+                "No status data available.",
+
+            centerLabel:
+                "STATUS"
+        }
+    );
+
+
+    renderComparisonChart(data);
+
+    renderLifecycleChart(data);
+
+}
+
+
+
 
 /*
 ====================================================
@@ -3473,6 +4572,11 @@ function showPageError(message) {
             </div>
         `;
 
+    });
+
+    ["chart-severity", "chart-status", "chart-comparison", "chart-lifecycle"].forEach(id => {
+        destroyChart(id);
+        chartEmptyState(id, "Unable to load intelligence.");
     });
 
     const toggle = getElement("findings-toggle");

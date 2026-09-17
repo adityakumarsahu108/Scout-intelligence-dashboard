@@ -2511,6 +2511,193 @@ body.modal-open {
             }
         }
 
+        /* ============================================
+           CHART PANELS
+           New: dedicated visual-analytics panels that sit
+           alongside the existing bar/gauge visualizations.
+           Chart.js canvases are wrapped so height is fixed
+           and predictable regardless of dataset size.
+        ============================================ */
+
+        .charts-row {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .chart-card {
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 14px;
+        }
+
+        .chart-card-title {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--text-tertiary);
+            margin-bottom: 12px;
+        }
+
+        .chart-canvas-wrap {
+            position: relative;
+            height: 200px;
+        }
+
+        .chart-canvas-wrap.chart-tall {
+            height: 240px;
+        }
+
+        .chart-legend-inline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 12px;
+            justify-content: center;
+        }
+
+        .chart-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--text-secondary);
+        }
+
+        .chart-legend-swatch {
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        @media (max-width: 700px) {
+            .charts-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 620px) {
+            .chart-canvas-wrap {
+                height: 180px;
+            }
+
+            .chart-canvas-wrap.chart-tall {
+                height: 210px;
+            }
+        }
+        /* ==================================================
+   PREMIUM ANALYTICS CHART UI
+================================================== */
+
+.chart-card {
+    position: relative;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 14px;
+    background:
+        linear-gradient(
+            145deg,
+            rgba(255,255,255,0.025),
+            rgba(255,255,255,0.008)
+        );
+    box-shadow:
+        0 8px 30px rgba(0,0,0,0.14);
+    overflow: hidden;
+}
+
+.chart-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(
+            circle at 50% 0%,
+            rgba(79,140,255,0.07),
+            transparent 55%
+        );
+}
+
+.chart-card canvas {
+    position: relative;
+    z-index: 1;
+}
+
+.chart-container {
+    position: relative;
+    min-height: 210px;
+}
+
+.chart-legend {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px;
+    margin-top: 8px;
+    padding: 4px 10px 12px;
+}
+
+
+/* Donut charts */
+
+#chart-severity,
+#chart-status,
+#chart-lifecycle {
+    min-height: 190px;
+}
+
+
+/* Comparison */
+
+#chart-comparison {
+    min-height: 240px;
+}
+
+
+/* Better chart titles */
+
+.chart-title {
+    position: relative;
+    z-index: 2;
+    font-size: 13px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: #f4f7fa;
+}
+
+.chart-subtitle {
+    position: relative;
+    z-index: 2;
+    margin-top: 3px;
+    font-size: 10.5px;
+    color: #687788;
+}
+
+
+/* Mobile */
+
+@media (max-width: 700px) {
+
+    .chart-container {
+        min-height: 190px;
+    }
+
+    #chart-comparison {
+        min-height: 220px;
+    }
+
+    .chart-legend {
+        justify-content: flex-start;
+        padding-left: 4px;
+    }
+
+}
+
     </style>
 </head>
 
@@ -2605,6 +2792,58 @@ body.modal-open {
             </div>
 
         </section>
+
+
+        <!-- ============================================
+         VISUAL ANALYTICS — chart panel
+         Sits right under the readout strip so trends are
+         visible before scrolling into the detail panels.
+         Populated by renderCharts() in intelligence.js,
+         using the same `data` object as everything else.
+    ============================================ -->
+
+        <section class="panel" id="charts-panel">
+            <div class="panel-head">
+                <div class="panel-title">Visual Analytics</div>
+                <div class="panel-meta" id="charts-meta">Severity, status &amp; trend</div>
+            </div>
+
+            <div class="charts-row">
+
+                <div class="chart-card">
+                    <div class="chart-card-title">Alerts by Severity</div>
+                    <div class="chart-canvas-wrap">
+                        <canvas id="chart-severity"></canvas>
+                    </div>
+                    <div class="chart-legend-inline" id="chart-severity-legend"></div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-card-title">Alerts by Status</div>
+                    <div class="chart-canvas-wrap">
+                        <canvas id="chart-status"></canvas>
+                    </div>
+                    <div class="chart-legend-inline" id="chart-status-legend"></div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-card-title">Current vs Previous Report</div>
+                    <div class="chart-canvas-wrap chart-tall">
+                        <canvas id="chart-comparison"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-card-title">Alert Lifecycle</div>
+                    <div class="chart-canvas-wrap chart-tall">
+                        <canvas id="chart-lifecycle"></canvas>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <br>
 
 
         <!-- ============================================
@@ -2798,6 +3037,7 @@ body.modal-open {
     </div>
 
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
     <script src="./js/intelligence.js"></script>
 
 </body>
