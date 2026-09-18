@@ -3470,57 +3470,43 @@ function renderGeneratedAt(data) {
 
 }
 
+
 /*
 ====================================================
-VISUAL ANALYTICS — PREMIUM CHART.JS PANEL
+VISUAL ANALYTICS — CHART.JS PANEL
 ====================================================
+Draws four charts from the same `data` object every other
+render function already uses:
 
-Improved visual treatment for:
-  1. Severity donut
-  2. Status donut
-  3. Current vs Previous comparison
-  4. New vs Carried-over lifecycle
+  1. Severity donut  — data.alerts.severity
+  2. Status donut    — data.alerts.status
+  3. Comparison bars — data.comparison (current vs previous)
+  4. Lifecycle donut — data.lifecycle (new vs carried over)
 
-Keeps the existing data structure and canvas IDs.
+Chart instances are cached on `window.__intelCharts` and
+destroyed/recreated on every refresh so repeated calls to
+loadIntelligence() don't leak canvases or stack tooltips.
+Purely additive — no existing render function or DOM id is
+touched, and if data for a given chart is missing the card
+just shows a quiet empty state instead of throwing.
+
+Visual language matches the rest of the dashboard: donuts
+carry a center readout (total + label) instead of relying
+on an external legend to convey scale, every card gets a
+one-line, data-driven caption under its title, and bars use
+a subtle vertical gradient rather than a flat fill so the
+"Visual Analytics" panel reads as a first-class section
+instead of a bolted-on afterthought.
 ====================================================
 */
 
 window.__intelCharts = window.__intelCharts || {};
 
-
-/* ==================================================
-   CHART THEME
-================================================== */
-
-const PREMIUM_CHART = {
-
-    bg: "#0f1720",
-    panel: "#151e28",
-
-    text: "#f4f7fa",
-    secondary: "#9aa8b8",
-    tertiary: "#687788",
-
-    grid: "rgba(255,255,255,0.055)",
-
-    blue: "#4f8cff",
-    blueSoft: "rgba(79,140,255,0.18)",
-
-    green: "#36c98f",
-    yellow: "#f2c94c",
-    orange: "#f2994a",
-    red: "#ff5c6c",
-
-    gray: "#64748b",
-
-    tooltipBg: "#111923",
-    tooltipBorder: "rgba(255,255,255,0.10)"
+const CHART_THEME = {
+    tooltipBg: "#161f2b",
+    tooltipBorder: "#2e3a49",
+    gridLine: "rgba(141, 153, 170, 0.08)"
 };
-
-
-/* ==================================================
-   DESTROY EXISTING CHART
-================================================== */
 
 function destroyChart(key) {
 
@@ -3534,10 +3520,6 @@ function destroyChart(key) {
 }
 
 
-/* ==================================================
-   EMPTY STATE
-================================================== */
-
 function chartEmptyState(canvasId, message) {
 
     const canvas = getElement(canvasId);
@@ -3547,55 +3529,21 @@ function chartEmptyState(canvasId, message) {
     }
 
     destroyChart(canvasId);
-
     canvas.style.display = "none";
 
     let note = canvas.parentElement.querySelector(".chart-empty-note");
 
     if (!note) {
-
         note = document.createElement("div");
-
         note.className = "chart-empty-note empty-state";
-
-        note.style.cssText = `
-            width:100%;
-            min-height:180px;
-            display:flex;
-            flex-direction:column;
-            align-items:center;
-            justify-content:center;
-            gap:10px;
-            color:${PREMIUM_CHART.tertiary};
-            font-size:13px;
-            text-align:center;
-        `;
-
+        note.style.cssText = "padding:0; min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;";
         canvas.parentElement.appendChild(note);
     }
 
-    note.innerHTML = `
-        <div style="
-            width:38px;
-            height:38px;
-            border-radius:50%;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            background:rgba(255,255,255,0.035);
-            border:1px solid rgba(255,255,255,0.07);
-            font-size:18px;
-        ">○</div>
-
-        <span>${escapeHTML(message)}</span>
-    `;
+    note.innerHTML = `<div class="empty-icon">\u25CB</div>${escapeHTML(message)}`;
 
 }
 
-
-/* ==================================================
-   CLEAR EMPTY STATE
-================================================== */
 
 function clearChartEmptyState(canvasId) {
 
@@ -3607,8 +3555,7 @@ function clearChartEmptyState(canvasId) {
 
     canvas.style.display = "";
 
-    const note =
-        canvas.parentElement?.querySelector(".chart-empty-note");
+    const note = canvas.parentElement?.querySelector(".chart-empty-note");
 
     if (note) {
         note.remove();
@@ -3617,75 +3564,35 @@ function clearChartEmptyState(canvasId) {
 }
 
 
-/* ==================================================
-   PREMIUM TOOLTIP
-================================================== */
+// Small one-line caption rendered under a chart's title, e.g.
+// "1,204 total  ·  62% high or critical". Purely descriptive —
+// mirrors panel-meta styling already used elsewhere on the page.
+function setChartCaption(cardSelector, text) {
 
-const premiumTooltip = {
+    const card = document.querySelector(cardSelector);
 
-    backgroundColor: PREMIUM_CHART.tooltipBg,
-
-    borderColor: PREMIUM_CHART.tooltipBorder,
-
-    borderWidth: 1,
-
-    titleColor: PREMIUM_CHART.text,
-
-    bodyColor: PREMIUM_CHART.secondary,
-
-    padding: {
-        top: 12,
-        bottom: 12,
-        left: 14,
-        right: 14
-    },
-
-    cornerRadius: 10,
-
-    displayColors: true,
-
-    boxPadding: 5,
-
-    titleFont: {
-        size: 12,
-        weight: "600"
-    },
-
-    bodyFont: {
-        size: 12
-    },
-
-    callbacks: {
-
-        label: (ctx) => {
-
-            const value = Number(ctx.parsed);
-
-            const values = ctx.dataset.data || [];
-
-            const total =
-                values.reduce(
-                    (sum, current) =>
-                        sum + Number(current || 0),
-                    0
-                );
-
-            const percentage =
-                total > 0
-                    ? ((value / total) * 100).toFixed(1)
-                    : "0.0";
-
-            return ` ${formatNumber(value)}  ·  ${percentage}%`;
-        }
-
+    if (!card) {
+        return;
     }
 
-};
+    let caption = card.querySelector(".chart-caption");
 
+    if (!caption) {
+        caption = document.createElement("div");
+        caption.className = "chart-caption";
+        const title = card.querySelector(".chart-card-title");
+        if (title) {
+            title.insertAdjacentElement("afterend", caption);
+        } else {
+            card.prepend(caption);
+        }
+    }
 
-/* ==================================================
-   LEGEND
-================================================== */
+    caption.textContent = text || "";
+    caption.style.display = text ? "" : "none";
+
+}
+
 
 function renderLegend(elementId, entries) {
 
@@ -3700,126 +3607,73 @@ function renderLegend(elementId, entries) {
         return;
     }
 
-    el.innerHTML = entries.map(entry => `
-        
-        <span class="chart-legend-item"
-            style="
-                display:inline-flex;
-                align-items:center;
-                gap:7px;
-                margin:4px 12px 4px 0;
-                font-size:11px;
-                color:${PREMIUM_CHART.secondary};
-                white-space:nowrap;
-            "
-        >
+    const total = entries.reduce((sum, e) => sum + Number(e.value || 0), 0);
 
-            <span
-                class="chart-legend-swatch"
-                style="
-                    width:8px;
-                    height:8px;
-                    border-radius:50%;
-                    background:${entry.color};
-                    box-shadow:0 0 0 3px ${entry.color}22;
-                    flex:none;
-                "
-            ></span>
+    el.innerHTML = entries.map(entry => {
 
-            <span>
+        const pct = total > 0 ? Math.round((entry.value / total) * 100) : 0;
+
+        return `
+            <span class="chart-legend-item">
+                <span class="chart-legend-swatch" style="background:${entry.color}"></span>
                 ${escapeHTML(entry.label)}
+                <strong>${formatNumber(entry.value)}</strong>
+                <span style="opacity:.55;">${pct}%</span>
             </span>
+        `;
 
-            <strong
-                style="
-                    color:${PREMIUM_CHART.text};
-                    font-weight:600;
-                "
-            >
-                ${formatNumber(entry.value)}
-            </strong>
-
-        </span>
-
-    `).join("");
+    }).join("");
 
 }
 
 
-/* ==================================================
-   CENTER TEXT PLUGIN
-================================================== */
-
+// Shared Chart.js plugin: draws a total count + label in the
+// donut's empty center, so the ring itself doubles as a KPI
+// readout instead of needing a separate number elsewhere.
 const centerTextPlugin = {
-
     id: "centerText",
+    afterDraw(chart, args, opts) {
 
-    afterDraw(chart, args, pluginOptions) {
-
-        if (!pluginOptions || !pluginOptions.display) {
+        if (!opts || !opts.display) {
             return;
         }
 
-        const {
-            ctx,
-            chartArea
-        } = chart;
-
-        const x =
-            (chartArea.left + chartArea.right) / 2;
-
-        const y =
-            (chartArea.top + chartArea.bottom) / 2;
+        const { ctx, chartArea } = chart;
+        const x = (chartArea.left + chartArea.right) / 2;
+        const y = (chartArea.top + chartArea.bottom) / 2;
 
         ctx.save();
-
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
 
-        /* Main number */
+        ctx.font = "700 22px 'Space Grotesk', 'IBM Plex Mono', monospace";
+        ctx.fillStyle = CHART_COLORS.textPrimary;
+        ctx.fillText(formatNumber(opts.value), x, y - 6);
 
-        ctx.font =
-            "700 25px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
-
-        ctx.fillStyle =
-            PREMIUM_CHART.text;
-
-        ctx.fillText(
-            formatNumber(pluginOptions.value),
-            x,
-            y - 5
-        );
-
-        /* Label */
-
-        ctx.font =
-            "500 9px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
-
-        ctx.fillStyle =
-            PREMIUM_CHART.tertiary;
-
-        ctx.fillText(
-            pluginOptions.label || "TOTAL",
-            x,
-            y + 18
-        );
+        ctx.font = "600 9px 'IBM Plex Mono', monospace";
+        ctx.fillStyle = CHART_COLORS.textTertiary;
+        ctx.fillText((opts.label || "TOTAL").toUpperCase(), x, y + 15);
 
         ctx.restore();
-    }
 
+    }
+};
+
+const chartTooltipBase = {
+    backgroundColor: CHART_THEME.tooltipBg,
+    borderColor: CHART_THEME.tooltipBorder,
+    borderWidth: 1,
+    cornerRadius: 8,
+    padding: 10,
+    titleColor: CHART_COLORS.textPrimary,
+    bodyColor: CHART_COLORS.textSecondary,
+    titleFont: { size: 11.5, weight: "600" },
+    bodyFont: { size: 11.5 },
+    boxPadding: 4
 };
 
 
-/* ==================================================
-   DONUT CHART
-================================================== */
-
-function renderDonutChart(
-    canvasId,
-    legendId,
-    entries,
-    options = {}
-) {
+function renderDonutChart(canvasId, legendId, entries, options = {}) {
 
     if (!window.Chart) {
         return;
@@ -3834,135 +3688,67 @@ function renderDonutChart(
     destroyChart(canvasId);
 
     if (!entries.length) {
-
-        chartEmptyState(
-            canvasId,
-            options.emptyMessage || "No data available."
-        );
-
+        chartEmptyState(canvasId, options.emptyMessage || "No data available.");
         renderLegend(legendId, []);
-
+        if (options.captionSelector) setChartCaption(options.captionSelector, "");
         return;
     }
 
     clearChartEmptyState(canvasId);
 
-    const total =
-        entries.reduce(
-            (sum, item) =>
-                sum + Number(item.value || 0),
-            0
-        );
+    const total = entries.reduce((sum, e) => sum + Number(e.value || 0), 0);
 
-    window.__intelCharts[canvasId] =
-        new Chart(
-            canvas.getContext("2d"),
-            {
-
-                type: "doughnut",
-
-                data: {
-
-                    labels:
-                        entries.map(e => e.label),
-
-                    datasets: [
-
-                        {
-                            data:
-                                entries.map(e => e.value),
-
-                            backgroundColor:
-                                entries.map(e => e.color),
-
-                            borderColor:
-                                PREMIUM_CHART.panel,
-
-                            borderWidth: 3,
-
-                            hoverBorderWidth: 3,
-
-                            hoverOffset: 7,
-
-                            spacing: 2
+    window.__intelCharts[canvasId] = new Chart(canvas.getContext("2d"), {
+        type: "doughnut",
+        data: {
+            labels: entries.map(e => e.label),
+            datasets: [{
+                data: entries.map(e => e.value),
+                backgroundColor: entries.map(e => e.color),
+                borderColor: CHART_COLORS.panelBg,
+                borderWidth: 3,
+                hoverBorderWidth: 3,
+                hoverOffset: 6,
+                spacing: 2
+            }]
+        },
+        plugins: [centerTextPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: "70%",
+            animation: { duration: 550, easing: "easeOutQuart" },
+            interaction: { intersect: false, mode: "nearest" },
+            plugins: {
+                legend: { display: false },
+                centerText: { display: true, value: total, label: options.centerLabel || "total" },
+                tooltip: {
+                    ...chartTooltipBase,
+                    callbacks: {
+                        label: (ctx) => {
+                            const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : "0.0";
+                            return ` ${ctx.label}: ${formatNumber(ctx.parsed)} (${pct}%)`;
                         }
-
-                    ]
-                },
-
-                plugins: [
-                    centerTextPlugin
-                ],
-
-                options: {
-
-                    responsive: true,
-
-                    maintainAspectRatio: false,
-
-                    cutout: "73%",
-
-                    rotation: -90,
-
-                    animation: {
-
-                        duration: 700,
-
-                        easing: "easeOutQuart"
-                    },
-
-                    plugins: {
-
-                        legend: {
-                            display: false
-                        },
-
-                        tooltip: premiumTooltip,
-
-                        centerText: {
-
-                            display: true,
-
-                            value: total,
-
-                            label:
-                                options.centerLabel ||
-                                "TOTAL"
-                        }
-                    },
-
-                    interaction: {
-
-                        intersect: false,
-
-                        mode: "nearest"
                     }
                 }
             }
-        );
+        }
+    });
 
-    renderLegend(
-        legendId,
-        entries.map(e => ({
-            label: e.label,
-            value: e.value,
-            color: e.color
-        }))
-    );
+    renderLegend(legendId, entries.map(e => ({ label: e.label, value: e.value, color: e.color })));
+
+    if (options.captionSelector && typeof options.caption === "function") {
+        setChartCaption(options.captionSelector, options.caption(entries, total));
+    }
 
 }
 
-
-/* ==================================================
-   COMPARISON CHART
-================================================== */
 
 function renderComparisonChart(data) {
 
     const canvasId = "chart-comparison";
-
-    const canvas =
-        getElement(canvasId);
+    const canvas = getElement(canvasId);
+    const captionSelector = "#chart-comparison-card";
 
     if (!canvas || !window.Chart) {
         return;
@@ -3970,314 +3756,128 @@ function renderComparisonChart(data) {
 
     destroyChart(canvasId);
 
-    const comparison =
-        data?.comparison;
+    const comparison = data?.comparison;
 
     if (!comparison) {
-
-        chartEmptyState(
-            canvasId,
-            "No comparison data available."
-        );
-
+        chartEmptyState(canvasId, "No comparison data available.");
+        setChartCaption(captionSelector, "");
         return;
     }
 
-    const currentReport =
-        comparison.currentReport || {};
+    const currentReport = comparison.currentReport || {};
+    const previousReport = comparison.previousReport || {};
+    const change = comparison.change || {};
 
-    const previousReport =
-        comparison.previousReport || {};
-
-    const labels = [
-        "Total Alerts",
-        "Cyera",
-        "Purview"
-    ];
-
+    const labels = ["Total Alerts", "Cyera", "Purview"];
     const current = [
-
-        currentReport.totalAlerts ??
-            comparison.current ??
-            0,
-
-        currentReport.cyera ??
-            0,
-
-        currentReport.purview ??
-            0
-
+        currentReport.totalAlerts ?? comparison.current ?? 0,
+        currentReport.cyera ?? 0,
+        currentReport.purview ?? 0
     ];
-
     const previous = [
-
-        previousReport.totalAlerts ??
-            comparison.previous ??
-            0,
-
-        previousReport.cyera ??
-            0,
-
-        previousReport.purview ??
-            0
-
+        previousReport.totalAlerts ?? comparison.previous ?? 0,
+        previousReport.cyera ?? 0,
+        previousReport.purview ?? 0
     ];
 
-    if (
-        !current.some(v => v > 0) &&
-        !previous.some(v => v > 0)
-    ) {
-
-        chartEmptyState(
-            canvasId,
-            "No comparison data available."
-        );
-
+    if (!current.some(v => v > 0) && !previous.some(v => v > 0)) {
+        chartEmptyState(canvasId, "No comparison data available.");
+        setChartCaption(captionSelector, "");
         return;
     }
 
     clearChartEmptyState(canvasId);
 
+    const ctx = canvas.getContext("2d");
 
-    /* ----------------------------------------------
-       Gradient helper
-    ---------------------------------------------- */
+    const currentGradient = ctx.createLinearGradient(0, 0, 0, canvas.height || 220);
+    currentGradient.addColorStop(0, CHART_COLORS.blue);
+    currentGradient.addColorStop(1, "rgba(91, 157, 249, 0.35)");
 
-    const ctx =
-        canvas.getContext("2d");
-
-    const currentGradient =
-        ctx.createLinearGradient(
-            0,
-            0,
-            0,
-            canvas.height
-        );
-
-    currentGradient.addColorStop(
-        0,
-        PREMIUM_CHART.blue
-    );
-
-    currentGradient.addColorStop(
-        1,
-        "#3268d8"
-    );
-
-
-    const previousGradient =
-        ctx.createLinearGradient(
-            0,
-            0,
-            0,
-            canvas.height
-        );
-
-    previousGradient.addColorStop(
-        0,
-        "rgba(148,163,184,0.42)"
-    );
-
-    previousGradient.addColorStop(
-        1,
-        "rgba(100,116,139,0.20)"
-    );
-
-
-    window.__intelCharts[canvasId] =
-        new Chart(
-            ctx,
-            {
-
-                type: "bar",
-
-                data: {
-
-                    labels,
-
-                    datasets: [
-
-                        {
-                            label: "Previous",
-
-                            data: previous,
-
-                            backgroundColor:
-                                previousGradient,
-
-                            borderColor:
-                                "rgba(148,163,184,0.45)",
-
-                            borderWidth: 1,
-
-                            borderRadius: 7,
-
-                            borderSkipped: false,
-
-                            maxBarThickness: 32
-                        },
-
-                        {
-                            label: "Current",
-
-                            data: current,
-
-                            backgroundColor:
-                                currentGradient,
-
-                            borderColor:
-                                PREMIUM_CHART.blue,
-
-                            borderWidth: 1,
-
-                            borderRadius: 7,
-
-                            borderSkipped: false,
-
-                            maxBarThickness: 32
-                        }
-
-                    ]
+    window.__intelCharts[canvasId] = new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: "Previous",
+                    data: previous,
+                    backgroundColor: "rgba(141, 153, 170, 0.28)",
+                    borderColor: "rgba(141, 153, 170, 0.5)",
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    borderSkipped: false,
+                    maxBarThickness: 30
                 },
-
-                options: {
-
-                    responsive: true,
-
-                    maintainAspectRatio: false,
-
-                    animation: {
-
-                        duration: 700,
-
-                        easing: "easeOutQuart"
-                    },
-
-                    interaction: {
-
-                        intersect: false,
-
-                        mode: "index"
-                    },
-
-                    scales: {
-
-                        x: {
-
-                            border: {
-                                display: false
-                            },
-
-                            ticks: {
-
-                                color:
-                                    PREMIUM_CHART.secondary,
-
-                                font: {
-
-                                    size: 10,
-
-                                    weight: "500"
-                                },
-
-                                padding: 8
-                            },
-
-                            grid: {
-
-                                display: false
-                            }
-                        },
-
-                        y: {
-
-                            beginAtZero: true,
-
-                            border: {
-                                display: false
-                            },
-
-                            ticks: {
-
-                                color:
-                                    PREMIUM_CHART.tertiary,
-
-                                font: {
-                                    size: 9
-                                },
-
-                                padding: 8
-                            },
-
-                            grid: {
-
-                                color:
-                                    PREMIUM_CHART.grid,
-
-                                drawTicks: false
-                            }
-                        }
-                    },
-
-                    plugins: {
-
-                        legend: {
-
-                            position: "bottom",
-
-                            labels: {
-
-                                color:
-                                    PREMIUM_CHART.secondary,
-
-                                usePointStyle: true,
-
-                                pointStyle: "circle",
-
-                                boxWidth: 7,
-
-                                boxHeight: 7,
-
-                                padding: 18,
-
-                                font: {
-
-                                    size: 10,
-
-                                    weight: "500"
-                                }
-                            }
-                        },
-
-                        tooltip: {
-
-                            ...premiumTooltip,
-
-                            callbacks: {
-
-                                label: (ctx) =>
-                                    ` ${formatNumber(ctx.parsed.y)}`
-                            }
-                        }
+                {
+                    label: "Current",
+                    data: current,
+                    backgroundColor: currentGradient,
+                    borderColor: CHART_COLORS.blue,
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    borderSkipped: false,
+                    maxBarThickness: 30
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 550, easing: "easeOutQuart" },
+            interaction: { intersect: false, mode: "index" },
+            scales: {
+                x: {
+                    border: { display: false },
+                    ticks: { color: CHART_COLORS.textSecondary, font: { size: 10.5 } },
+                    grid: { display: false }
+                },
+                y: {
+                    beginAtZero: true,
+                    border: { display: false },
+                    ticks: { color: CHART_COLORS.textTertiary, font: { size: 10 } },
+                    grid: { color: CHART_THEME.gridLine, drawTicks: false }
+                }
+            },
+            plugins: {
+                legend: {
+                    position: "bottom",
+                    labels: {
+                        color: CHART_COLORS.textSecondary,
+                        usePointStyle: true,
+                        pointStyle: "circle",
+                        boxWidth: 7,
+                        boxHeight: 7,
+                        padding: 16,
+                        font: { size: 10.5 }
+                    }
+                },
+                tooltip: {
+                    ...chartTooltipBase,
+                    callbacks: {
+                        label: (ctx) => ` ${ctx.dataset.label}: ${formatNumber(ctx.parsed.y)}`
                     }
                 }
             }
-        );
+        }
+    });
+
+    const totalChange = Number(change.totalAlerts ?? 0);
+    const totalPct = Number(change.totalPercentage ?? 0);
+    const captionText = totalChange === 0
+        ? "Total alerts unchanged vs previous report"
+        : `Total alerts ${totalChange > 0 ? "up" : "down"} ${formatNumber(Math.abs(totalChange))} (${Math.abs(totalPct).toFixed(1)}%) vs previous report`;
+
+    setChartCaption(captionSelector, captionText);
 
 }
 
-
-/* ==================================================
-   LIFECYCLE CHART
-================================================== */
 
 function renderLifecycleChart(data) {
 
-    const canvasId =
-        "chart-lifecycle";
-
-    const canvas =
-        getElement(canvasId);
+    const canvasId = "chart-lifecycle";
+    const canvas = getElement(canvasId);
+    const captionSelector = "#chart-lifecycle-card";
 
     if (!canvas || !window.Chart) {
         return;
@@ -4285,249 +3885,132 @@ function renderLifecycleChart(data) {
 
     destroyChart(canvasId);
 
-    const lifecycle =
-        data?.lifecycle;
+    const lifecycle = data?.lifecycle;
 
     if (!lifecycle) {
-
-        chartEmptyState(
-            canvasId,
-            "No lifecycle data available."
-        );
-
+        chartEmptyState(canvasId, "No lifecycle data available.");
+        setChartCaption(captionSelector, "");
         return;
     }
 
-    const newAlerts =
-        Number(lifecycle.new ?? 0);
+    const newAlerts = Number(lifecycle.new ?? 0);
+    const carriedOver = Number(lifecycle.carriedOver ?? 0);
 
-    const carriedOver =
-        Number(lifecycle.carriedOver ?? 0);
-
-    if (
-        newAlerts <= 0 &&
-        carriedOver <= 0
-    ) {
-
-        chartEmptyState(
-            canvasId,
-            "No lifecycle data available."
-        );
-
+    if (newAlerts <= 0 && carriedOver <= 0) {
+        chartEmptyState(canvasId, "No lifecycle data available.");
+        setChartCaption(captionSelector, "");
         return;
     }
 
     clearChartEmptyState(canvasId);
 
-    const total =
-        newAlerts + carriedOver;
+    const total = newAlerts + carriedOver;
+    const carriedPct = total > 0 ? (carriedOver / total) * 100 : 0;
 
-
-    window.__intelCharts[canvasId] =
-        new Chart(
-            canvas.getContext("2d"),
-            {
-
-                type: "doughnut",
-
-                data: {
-
-                    labels: [
-                        "New this report",
-                        "Carried over"
-                    ],
-
-                    datasets: [
-
-                        {
-                            data: [
-                                newAlerts,
-                                carriedOver
-                            ],
-
-                            backgroundColor: [
-                                PREMIUM_CHART.blue,
-                                PREMIUM_CHART.gray
-                            ],
-
-                            borderColor:
-                                PREMIUM_CHART.panel,
-
-                            borderWidth: 3,
-
-                            hoverOffset: 7,
-
-                            spacing: 2
-                        }
-
-                    ]
+    window.__intelCharts[canvasId] = new Chart(canvas.getContext("2d"), {
+        type: "doughnut",
+        data: {
+            labels: ["New this report", "Carried over"],
+            datasets: [{
+                data: [newAlerts, carriedOver],
+                backgroundColor: [CHART_COLORS.blue, CHART_COLORS.textTertiary],
+                borderColor: CHART_COLORS.panelBg,
+                borderWidth: 3,
+                hoverBorderWidth: 3,
+                hoverOffset: 6,
+                spacing: 2
+            }]
+        },
+        plugins: [centerTextPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: "70%",
+            animation: { duration: 550, easing: "easeOutQuart" },
+            plugins: {
+                legend: {
+                    position: "bottom",
+                    labels: {
+                        color: CHART_COLORS.textSecondary,
+                        usePointStyle: true,
+                        pointStyle: "circle",
+                        boxWidth: 7,
+                        boxHeight: 7,
+                        padding: 16,
+                        font: { size: 10.5 }
+                    }
                 },
-
-                plugins: [
-                    centerTextPlugin
-                ],
-
-                options: {
-
-                    responsive: true,
-
-                    maintainAspectRatio: false,
-
-                    cutout: "73%",
-
-                    rotation: -90,
-
-                    animation: {
-
-                        duration: 700,
-
-                        easing: "easeOutQuart"
-                    },
-
-                    plugins: {
-
-                        legend: {
-
-                            position: "bottom",
-
-                            labels: {
-
-                                color:
-                                    PREMIUM_CHART.secondary,
-
-                                usePointStyle: true,
-
-                                pointStyle: "circle",
-
-                                boxWidth: 7,
-
-                                boxHeight: 7,
-
-                                padding: 18,
-
-                                font: {
-
-                                    size: 10,
-
-                                    weight: "500"
-                                }
-                            }
-                        },
-
-                        tooltip: premiumTooltip,
-
-                        centerText: {
-
-                            display: true,
-
-                            value: total,
-
-                            label: "TOTAL"
+                centerText: { display: true, value: total, label: "total" },
+                tooltip: {
+                    ...chartTooltipBase,
+                    callbacks: {
+                        label: (ctx) => {
+                            const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : "0.0";
+                            return ` ${ctx.label}: ${formatNumber(ctx.parsed)} (${pct}%)`;
                         }
                     }
                 }
             }
-        );
+        }
+    });
+
+    setChartCaption(
+        captionSelector,
+        `${formatPercentage(carriedPct)} of open alerts are carried over from a prior report`
+    );
 
 }
 
-
-/* ==================================================
-   MAIN RENDER
-================================================== */
 
 function renderCharts(data) {
 
     if (!window.Chart) {
-
-        [
-            "chart-severity",
-            "chart-status",
-            "chart-comparison",
-            "chart-lifecycle"
-
-        ].forEach(id => {
-
-            chartEmptyState(
-                id,
-                "Chart library unavailable."
-            );
-
+        // Chart.js failed to load (e.g. CDN blocked) — leave the
+        // canvases as quiet empty states rather than erroring.
+        ["chart-severity", "chart-status", "chart-comparison", "chart-lifecycle"].forEach(id => {
+            chartEmptyState(id, "Chart library unavailable.");
         });
-
         return;
     }
 
+    const alerts = data?.alerts || {};
 
-    const alerts =
-        data?.alerts || {};
+    const severityEntries = objectToEntries(alerts.severity)
+        .map(e => ({ ...e, color: chartToneColor(severityToTone(e.label)) }));
 
+    const statusEntries = objectToEntries(alerts.status)
+        .map(e => ({ ...e, color: chartToneColor(statusToTone(e.label)) }));
 
-    /* ----------------------------------------------
-       Severity
-    ---------------------------------------------- */
-
-    const severityEntries =
-        objectToEntries(alerts.severity)
-            .map(e => ({
-                ...e,
-                color:
-                    chartToneColor(
-                        severityToTone(e.label)
-                    )
-            }));
-
-
-    /* ----------------------------------------------
-       Status
-    ---------------------------------------------- */
-
-    const statusEntries =
-        objectToEntries(alerts.status)
-            .map(e => ({
-                ...e,
-                color:
-                    chartToneColor(
-                        statusToTone(e.label)
-                    )
-            }));
-
-
-    renderDonutChart(
-        "chart-severity",
-        "chart-severity-legend",
-        severityEntries,
-        {
-            emptyMessage:
-                "No severity data available.",
-
-            centerLabel:
-                "ALERTS"
+    renderDonutChart("chart-severity", "chart-severity-legend", severityEntries, {
+        emptyMessage: "No severity data available.",
+        centerLabel: "alerts",
+        captionSelector: "#chart-severity-card",
+        caption: (entries, total) => {
+            const highRisk = entries
+                .filter(e => e.label.toLowerCase() === "critical" || e.label.toLowerCase() === "high")
+                .reduce((s, e) => s + e.value, 0);
+            const pct = total > 0 ? (highRisk / total) * 100 : 0;
+            return `${formatPercentage(pct)} rated high or critical severity`;
         }
-    );
+    });
 
-
-    renderDonutChart(
-        "chart-status",
-        "chart-status-legend",
-        statusEntries,
-        {
-            emptyMessage:
-                "No status data available.",
-
-            centerLabel:
-                "STATUS"
+    renderDonutChart("chart-status", "chart-status-legend", statusEntries, {
+        emptyMessage: "No status data available.",
+        centerLabel: "alerts",
+        captionSelector: "#chart-status-card",
+        caption: (entries, total) => {
+            const open = entries
+                .filter(e => ["open", "active", "investigating"].includes(e.label.toLowerCase()))
+                .reduce((s, e) => s + e.value, 0);
+            const pct = total > 0 ? (open / total) * 100 : 0;
+            return `${formatPercentage(pct)} still open or in progress`;
         }
-    );
-
+    });
 
     renderComparisonChart(data);
-
     renderLifecycleChart(data);
 
 }
-
-
 
 
 /*

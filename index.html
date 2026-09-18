@@ -383,6 +383,7 @@
             border-radius: var(--radius);
             margin-bottom: 22px;
             overflow: hidden;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .12);
         }
 
         .readout-cell {
@@ -392,8 +393,25 @@
             transition: background .15s var(--ease);
         }
 
+        .readout-cell::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--blue);
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform .2s var(--ease);
+        }
+
         .readout-cell:hover {
-            background: rgba(255, 255, 255, .015);
+            background: rgba(255, 255, 255, .02);
+        }
+
+        .readout-cell:hover::before {
+            transform: scaleX(1);
         }
 
         .readout-cell:last-child {
@@ -483,11 +501,19 @@
         }
 
         .panel {
-            background: var(--bg-panel);
+            background:
+                radial-gradient(circle at 0% 0%, rgba(91, 157, 249, .035), transparent 45%),
+                var(--bg-panel);
             border: 1px solid var(--border);
             border-radius: var(--radius);
             padding: 20px;
-            transition: border-color .2s var(--ease);
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .12);
+            transition: border-color .2s var(--ease), box-shadow .2s var(--ease);
+        }
+
+        .panel:hover {
+            border-color: var(--border-strong);
+            box-shadow: 0 8px 26px rgba(0, 0, 0, .18);
         }
 
         .panel-head {
@@ -1344,7 +1370,10 @@
             display: flex;
             gap: 2px;
             margin-bottom: 16px;
-            border-bottom: 1px solid var(--border-soft);
+            padding: 4px;
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: 10px;
             overflow-x: auto;
         }
 
@@ -1356,11 +1385,11 @@
             color: var(--text-tertiary);
             background: transparent;
             border: none;
-            padding: 0 0 10px;
-            margin-right: 16px;
+            border-radius: 7px;
+            padding: 7px 12px;
+            margin-right: 0;
             white-space: nowrap;
-            border-bottom: 2px solid transparent;
-            transition: color .15s var(--ease), border-color .15s var(--ease);
+            transition: color .15s var(--ease), background .15s var(--ease);
         }
 
         .state-tab:hover {
@@ -1369,7 +1398,8 @@
 
         .state-tab.active {
             color: var(--text-primary);
-            border-bottom-color: var(--blue);
+            background: var(--bg-raised-hover);
+            box-shadow: inset 0 0 0 1px var(--border-strong), 0 2px 8px rgba(0, 0, 0, .18);
         }
 
         .state-tab-panel {
@@ -2274,8 +2304,8 @@ body.modal-open {
 
             /* Tabs become a comfortable horizontal touch rail */
             .state-tabs {
-                margin: 0 -3px 14px;
-                padding: 0 3px;
+                margin-bottom: 14px;
+                padding: 3px;
                 scrollbar-width: none;
                 -webkit-overflow-scrolling: touch;
             }
@@ -2286,9 +2316,9 @@ body.modal-open {
 
             .state-tab {
                 flex: 0 0 auto;
-                min-height: 34px;
-                padding: 0 0 9px;
-                margin-right: 15px;
+                min-height: 32px;
+                padding: 0 10px;
+                margin-right: 0;
                 font-size: 9.5px;
             }
 
@@ -2590,113 +2620,66 @@ body.modal-open {
             }
         }
         /* ==================================================
-   PREMIUM ANALYTICS CHART UI
-================================================== */
+           VISUAL ANALYTICS — PANEL & CARD TREATMENT
+        ================================================== */
 
-.chart-card {
-    position: relative;
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
-    background:
-        linear-gradient(
-            145deg,
-            rgba(255,255,255,0.025),
-            rgba(255,255,255,0.008)
-        );
-    box-shadow:
-        0 8px 30px rgba(0,0,0,0.14);
-    overflow: hidden;
-}
+        #charts-panel {
+            margin-bottom: 20px;
+        }
 
-.chart-card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-        radial-gradient(
-            circle at 50% 0%,
-            rgba(79,140,255,0.07),
-            transparent 55%
-        );
-}
+        .chart-card {
+            position: relative;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background:
+                radial-gradient(circle at 50% 0%, rgba(91, 157, 249, .06), transparent 60%),
+                linear-gradient(155deg, rgba(255,255,255,.02), rgba(255,255,255,.005));
+            box-shadow: 0 6px 22px rgba(0, 0, 0, .16);
+            overflow: hidden;
+            transition: border-color .2s var(--ease), transform .2s var(--ease);
+        }
 
-.chart-card canvas {
-    position: relative;
-    z-index: 1;
-}
+        .chart-card:hover {
+            border-color: var(--border-strong);
+        }
 
-.chart-container {
-    position: relative;
-    min-height: 210px;
-}
+        .chart-card canvas {
+            position: relative;
+            z-index: 1;
+        }
 
-.chart-legend {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 2px;
-    margin-top: 8px;
-    padding: 4px 10px 12px;
-}
+        .chart-card-title {
+            position: relative;
+            z-index: 1;
+        }
 
+        .chart-caption {
+            position: relative;
+            z-index: 1;
+            font-size: 11px;
+            line-height: 1.4;
+            color: var(--text-secondary);
+            margin-top: -6px;
+            margin-bottom: 12px;
+            min-height: 15px;
+        }
 
-/* Donut charts */
+        .chart-caption:empty {
+            display: none;
+        }
 
-#chart-severity,
-#chart-status,
-#chart-lifecycle {
-    min-height: 190px;
-}
+        .chart-legend-item strong {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin: 0 1px;
+        }
 
-
-/* Comparison */
-
-#chart-comparison {
-    min-height: 240px;
-}
-
-
-/* Better chart titles */
-
-.chart-title {
-    position: relative;
-    z-index: 2;
-    font-size: 13px;
-    font-weight: 650;
-    letter-spacing: -0.01em;
-    color: #f4f7fa;
-}
-
-.chart-subtitle {
-    position: relative;
-    z-index: 2;
-    margin-top: 3px;
-    font-size: 10.5px;
-    color: #687788;
-}
-
-
-/* Mobile */
-
-@media (max-width: 700px) {
-
-    .chart-container {
-        min-height: 190px;
-    }
-
-    #chart-comparison {
-        min-height: 220px;
-    }
-
-    .chart-legend {
-        justify-content: flex-start;
-        padding-left: 4px;
-    }
-
-}
+        /* Mobile */
+        @media (max-width: 700px) {
+            .chart-caption {
+                margin-bottom: 10px;
+            }
+        }
 
     </style>
 </head>
@@ -2810,31 +2793,35 @@ body.modal-open {
 
             <div class="charts-row">
 
-                <div class="chart-card">
+                <div class="chart-card" id="chart-severity-card">
                     <div class="chart-card-title">Alerts by Severity</div>
+                    <div class="chart-caption"></div>
                     <div class="chart-canvas-wrap">
                         <canvas id="chart-severity"></canvas>
                     </div>
                     <div class="chart-legend-inline" id="chart-severity-legend"></div>
                 </div>
 
-                <div class="chart-card">
+                <div class="chart-card" id="chart-status-card">
                     <div class="chart-card-title">Alerts by Status</div>
+                    <div class="chart-caption"></div>
                     <div class="chart-canvas-wrap">
                         <canvas id="chart-status"></canvas>
                     </div>
                     <div class="chart-legend-inline" id="chart-status-legend"></div>
                 </div>
 
-                <div class="chart-card">
+                <div class="chart-card" id="chart-comparison-card">
                     <div class="chart-card-title">Current vs Previous Report</div>
+                    <div class="chart-caption"></div>
                     <div class="chart-canvas-wrap chart-tall">
                         <canvas id="chart-comparison"></canvas>
                     </div>
                 </div>
 
-                <div class="chart-card">
+                <div class="chart-card" id="chart-lifecycle-card">
                     <div class="chart-card-title">Alert Lifecycle</div>
+                    <div class="chart-caption"></div>
                     <div class="chart-canvas-wrap chart-tall">
                         <canvas id="chart-lifecycle"></canvas>
                     </div>
@@ -2842,8 +2829,6 @@ body.modal-open {
 
             </div>
         </section>
-
-        <br>
 
 
         <!-- ============================================
